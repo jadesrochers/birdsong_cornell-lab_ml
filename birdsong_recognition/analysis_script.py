@@ -44,6 +44,9 @@ class DataPreprocess():
        top_db = None
        # downsampled ratio. How can I know this in advance?
        self.interpolate_ratio = 32
+       self.sample_rate = sample_rate
+       self.window_size = window_size
+       self.bins = mel_bins
 
        # Result should be the same as librosa.core.stft for producting a Spectrogram. 
        # Uses conv1d to do this, replicating the Stft from librosa.
@@ -73,20 +76,30 @@ class DataPreprocess():
 
 
     def preprocess(self, input, mixup_lambda=None):
-        import pdb; pdb.set_trace()
         spectrogram = self.spectrogram_maker(input)
         logmel_spectro = self.logmel_extractor(spectrogram)
-        spectro_plot(logmel_spectro)
+        frequencies = dft_frequencies(self.window_size, self.sample_rate, self.bins)
+        spectro_plot(logmel_spectro, frequencies)
         return logmel_spectro
 
 
-def spectro_plot(logmel_spectro):
+def spectro_plot(logmel_spectro, frequencies):
     import pdb; pdb.set_trace()
     # 4d, but just need the innermost arrays transposed.
-    reformat = logmel_spectro.detach().numpy()[0, 0].transpose(1,0)
+    reformat = logmel_spectro.detach().numpy()[0, 0, 0:200].transpose(1,0)
     # librosa.display.specshow(logmel_spectro)
-    spec = plotex.imshow(reformat)
+    spec = plotex.imshow(reformat, y=frequencies, aspect='auto')
     spec.show()
+
+# The frequencies start at 0Hz (flat line defined by Fhat0)
+# and go up to the nyquist frequency, which is the sample rate/2.
+def dft_frequencies(sample_size, sample_rate, bins):
+    freq_hz = []
+    conversion_factor = sample_size / 2 / bins
+    for f in range(bins):
+        f_hat = f * conversion_factor
+        freq_hz.append(f_hat * sample_rate / sample_size)
+    return freq_hz
 
 
 def time_series(xdata, ydata, xlab, ylab):
@@ -104,7 +117,7 @@ def explore_data(start=10, end=20):
     # I downsampled to 16000. The spectrogram parameters may need to be
     # adjusted, but this is a starting point.
     # The spectrogram might not include enough high frequencies for birds.
-    preprocessor = DataPreprocess(sample_rate, 1024, 512, 64, 50, 8000)
+    preprocessor = DataPreprocess(sample_rate, 1024, 1024, 64, 50, 8000)
     for i, row in subset.iterrows():
         ebird_code = row.ebird_code
         resampled_filename = row.resampled_filename
@@ -112,7 +125,6 @@ def explore_data(start=10, end=20):
         sound_data = sf.read(data_path)
         x_data = list(range(160000))
         # time_series([x / sample_rate for x in x_data], sound_data[0][0:160000], 'Time(s)', 'Soundish')
-        import pdb; pdb.set_trace()
         # The input for the spectrogram is just a tensor of the sound values.
         # It needed to be float() due to the torchlibrosa stuff, but was very 
         # confusing because the error seemed indicated needing a double.
