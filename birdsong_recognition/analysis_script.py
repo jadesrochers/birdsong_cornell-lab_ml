@@ -63,9 +63,18 @@ class AudioDataset(Dataset):
     def __len__(self):
         return len(self.file_list)
 
-    def get_label_data(self, idx):
-        return self.file_list[idx]
+    #def get_label_data(self, idx):
+    #    return self.file_list[idx]
 
+    def convert_labels_to_coded(self, num_images, labels):
+        coded_labels = np.zeros((num_images,len(self.bird_code)))
+        for index, temp_label in enumerate(labels):
+            label_index = self.bird_code[temp_label]
+            coded_labels[:,label_index] = 1
+        return torch.from_numpy(coded_labels).float()
+
+    # Get training samples for a file. Will tacke the number of samples
+    # specified with the length of each (epoch_size) in seconds.
     def get_training_sample(self, idx, data, sr, samples=5, epoch_size=5):
        complete_epochs = int(len(data) / sr // epoch_size)
        sampled_epochs = random.sample(list(range(complete_epochs)), samples)
@@ -75,9 +84,7 @@ class AudioDataset(Dataset):
            epoch_data = data[start:end]
            epoch_tensor = torch.from_numpy(epoch_data).float()
            epoch_unsqueeze = epoch_tensor.unsqueeze(0)
-           import pdb; pdb.set_trace()
            spectros.append(self.spectrogram_maker.spectro_from_data(epoch_unsqueeze))
-           # metadata = self.get_label_data(idx)
        return spectros
 
 
@@ -88,6 +95,11 @@ class AudioDataset(Dataset):
         # This will ultimately return a dict with the list of spectrograms, codes,
         # and some other stuff.
         spectros = self.get_training_sample(idx, y, sr)
+        import pdb; pdb.set_trace()
+        # I probably DONT need these, I already use numeric values
+        # for the labels when I edited the file data
+        all_labels = self.convert_labels_to_coded(len(spectros), row.all_labels)
+        primary_labels = self.convert_labels_to_coded(len(spectros), row.primary_label)
         import pdb; pdb.set_trace()
 
         # TODO:
@@ -206,9 +218,9 @@ sample_rate = 16000
 def explore_data(start=10, end=20):
     data_csv = pd.read_csv(resample_audio_csv_file)
     subset = data_csv.iloc[start:end, :]
-    # I downsampled to 16000. The spectrogram parameters may need to be
-    # adjusted, but this is a starting point.
-    # The spectrogram might not include enough high frequencies for birds.
+    # I downsampled to 16000. 
+    # Window size (1024) does not need to be that big; The lowest
+    # frequency being 32+ Hz is not an issue. 
     preprocessor = SpectrogramCreator(sample_rate, 1024, 512, 64, 50, 8000)
     for i, row in subset.iterrows():
         ebird_code = row.ebird_code
@@ -248,8 +260,8 @@ def get_file_paths():
         data_path = resample_audio_dir / ebird_code / resampled_filename
         file_paths.append([bird_labels[row.ebird_code], row.ebird_code, resampled_filename, data_path])
 
-    # Get all the secondary labels, since the species names will now be in the bird_labels
-    # dict.
+    # Get all the secondary labels, since the species names will now be in 
+    # the bird_labels dict.
     for idx, row in data_csv.iterrows():
         row.all_labels.append(file_paths[idx][0])
         for bird in literal_eval(row.secondary_labels):
@@ -258,20 +270,20 @@ def get_file_paths():
                 row.all_labels.append(bird_labels[species])
         file_paths[idx].append(row.all_labels)
 
-    return pd.DataFrame(file_paths, columns=["primary_label", "label_text", "resampled_filename", "resampled_full_path", "secondary_labels"]), bird_labels
+    return pd.DataFrame(file_paths, columns=["primary_label", "label_text", "resampled_filename", "resampled_full_path", "all_labels"]), bird_labels
 
 
 # Add a column that labels each row with the iteration to use it for validation.
 # With 5 splits, about 20% of the data is for validation each time, so
 # THe labels in that column are unique (0, 1, 2, 3, 4).
-def kfold_sampling(all_data, target_varname, splits=5):
-    all_data['validation_fold'] = -1
+def kfold_sampling(songfiles_metadata, target_varname, splits=5):
+    songfiles_metadata['validation_fold'] = -1
     skf = StratifiedKFold(n_splits=splits, shuffle=True, random_state=42)
     # Inputs to skf.split() are x and y data. y can be considered labels.
-    testsplit = skf.split(all_data, all_data[target_varname])
+    testsplit = skf.split(songfiles_metadata, songfiles_metadata[target_varname])
     for fold_id, (train_indices, val_indices) in enumerate(testsplit):
-        all_data.loc[val_indices, 'validation_fold'] = fold_id
-    return all_data
+        songfiles_metadata.loc[val_indices, 'validation_fold'] = fold_id
+    return songfiles_metadata
 
 
 # How to do this:
@@ -305,7 +317,8 @@ def train_loop(all_data, paths, bird_codes):
 
 if __name__ == "__main__":
     # explore_data()
-    paths, bird_codes = get_file_paths()
-    all_data = kfold_sampling(paths, 'primary_label', 5)
-    train_loop(all_data, paths, bird_codes)
+    songfiles_metadata, bird_codes = get_file_paths()
+    import pdb; pdb.set_trace()
+    songfiles_metadata = kfold_sampling(songfiles_metadata, 'primary_label', 5)
+    train_loop(songfiles_metadata, songfiles_metadata, bird_codes)
     print('Finished with data grabbing, sampling')
