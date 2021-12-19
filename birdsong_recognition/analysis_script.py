@@ -51,11 +51,13 @@ class AudioDataset(Dataset):
             category_codes: Dict,
             period,
             spectrogram_maker,
+            is_training=True,
             waveform_transforms=None):
         self.file_list = file_list  # list of list: [file_path, ebird_code]
         self.category_codes = category_codes
         self.waveform_transforms = waveform_transforms
         self.spectrogram_maker = spectrogram_maker
+        self.is_training = is_training
         # This is the length of epoch?
         # Is there any way to get anything except the first epoch?
         self.period = period
@@ -66,8 +68,10 @@ class AudioDataset(Dataset):
     #def get_label_data(self, idx):
     #    return self.file_list[idx]
 
+    # This appears to do onehot encoding. I would rather avoid this
+    # if possible, I thought generally torch can do without it.
     def convert_labels_to_coded(self, num_images, labels):
-        coded_labels = np.zeros((num_images,len(self.bird_code)))
+        coded_labels = np.zeros((num_images, len(self.bird_code)))
         for index, temp_label in enumerate(labels):
             label_index = self.bird_code[temp_label]
             coded_labels[:,label_index] = 1
@@ -75,7 +79,7 @@ class AudioDataset(Dataset):
 
     # Get training samples for a file. Will tacke the number of samples
     # specified with the length of each (epoch_size) in seconds.
-    def get_training_sample(self, idx, data, sr, samples=5, epoch_size=5):
+    def get_training_sample(self, data, sr, samples=5, epoch_size=5):
        complete_epochs = int(len(data) / sr // epoch_size)
        sampled_epochs = random.sample(list(range(complete_epochs)), samples)
        sample_idxs = [(epoch * sr, (epoch + 1) * sr) for epoch in sampled_epochs]
@@ -83,9 +87,34 @@ class AudioDataset(Dataset):
        for (start, end) in sample_idxs:
            epoch_data = data[start:end]
            epoch_tensor = torch.from_numpy(epoch_data).float()
+           # Unsqueeze because the spectrogram maker uses a conv1d and
+           # can accept 1 or more channels, so need channel nested even if
+           # there is only 1.
            epoch_unsqueeze = epoch_tensor.unsqueeze(0)
            spectros.append(self.spectrogram_maker.spectro_from_data(epoch_unsqueeze))
        return spectros
+
+    # When predicting, do I just get the whole set of data?
+    # That seems like a logical way to do it, but I will have to determine
+    # how the model fits in.
+    # 1. It seems like an Event Detection model should be able to predict
+    #    on each epoch (5s) and then summarize to the whole length by 
+    #    averaging those, no matter how many there are
+    # 2. Maybe having a length that evenly divides into the epochs will
+    #    be important however, so perhaps I should do that here.
+    def get_prediction_data(self, data, sr, epoch_limit=100):
+       complete_epochs = int(len(data) / sr // epoch_size)
+       analyze_epochs = epoch_limit if complete_epochs > epoch_limit else complete_epochs
+       prediction_epochs = list(range(analyze_epochs))
+       spectro_idxs = [(epoch * sr, (epoch + 1) * sr) for epoch in prediction_epochs]
+       spectros = []
+       for (start, end) in sample_idxs:
+           epoch_data = data[start:end]
+           epoch_tensor = torch.from_numpy(epoch_data).float()
+           # See training data note about unsqueeze
+           epoch_unsqueeze = epoch_tensor.unsqueeze(0)
+           spectros.append(self.spectrogram_maker.spectro_from_data(epoch_unsqueeze))
+      return spectros
 
 
     # Get the code, filename. Load the data, sample a set of epochs from the 
@@ -94,18 +123,21 @@ class AudioDataset(Dataset):
         y, sr = sf.read(row.resampled_full_path)
         # This will ultimately return a dict with the list of spectrograms, codes,
         # and some other stuff.
-        spectros = self.get_training_sample(idx, y, sr)
+        if(self.is_training){
+            spectros = self.get_training_sample(y, sr, samples=5, epoch_size=5)
+        }else{
+            spectros = self.get_prediction_data(y, sr, epoch_limit=100)
+        }
         import pdb; pdb.set_trace()
-        # I probably DONT need these, I already use numeric values
-        # for the labels when I edited the file data
-        all_labels = self.convert_labels_to_coded(len(spectros), row.all_labels)
-        primary_labels = self.convert_labels_to_coded(len(spectros), row.primary_label)
+        # I did not think I needed one-hot vector labels for torch;
+        # add these back in if it is not working.
+        # all_labels = self.convert_labels_to_coded(len(spectros), row.all_labels)
+        # primary_labels = self.convert_labels_to_coded(len(spectros), row.primary_label)
         import pdb; pdb.set_trace()
 
         # TODO:
         # Add in Augmentations that will do various stretch, compress, noise
         # on the data to make it work better for the unknown data to be predicted on.
-
         #if self.waveform_transforms:
         #    y = self.waveform_transforms(y)
         #else:
@@ -121,10 +153,10 @@ class AudioDataset(Dataset):
         #        y = y[start:start + effective_length].astype(np.float32)
         #    else:
         #        y = y.astype(np.float32)
-
         #labels = np.zeros(len(self.category_codes), dtype="f")
         # Does this set the label for the current code to 1 and all others to zero?
         #labels[self.category_codes[ebird_code]] = 1
+
         return {"spectros": spectros,
                 "primary_target": row.primary_label,
                 "all_targets": row.all_targets}
