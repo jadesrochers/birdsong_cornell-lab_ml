@@ -39,6 +39,7 @@ class AudioDataset(Dataset):
         # Is there any way to get anything except the first epoch?
         self.period = period
 
+    # Important; this must be implemented
     def __len__(self):
         return len(self.file_list)
 
@@ -98,18 +99,20 @@ class AudioDataset(Dataset):
     def __getitem__(self, idx: int):
         row = self.file_list.iloc[idx, :]
         y, sr = sf.read(row.resampled_full_path)
-        # This will ultimately return a dict with the list of spectrograms, codes,
-        # and some other stuff.
+        # Problems: I need to change this to deal with data files that are
+        # too short, and to deal with the fact that I should not return
+        # separate nested data.  
+        # Pad with zeros as needed, and then make a single spectrogram
+        # out of the result.
         if(self.is_training):
             spectros = self.get_training_sample(y, sr, samples=5, epoch_size=5)
         else:
             spectros = self.get_prediction_data(y, sr, epoch_limit=100)
-        import pdb; pdb.set_trace()
+
         # I did not think I needed one-hot vector labels for torch;
         # add these back in if it is not working.
         # all_labels = self.convert_labels_to_coded(len(spectros), row.all_labels)
         # primary_labels = self.convert_labels_to_coded(len(spectros), row.primary_label)
-        import pdb; pdb.set_trace()
 
         # TODO:
         # Add in Augmentations that will do various stretch, compress, noise

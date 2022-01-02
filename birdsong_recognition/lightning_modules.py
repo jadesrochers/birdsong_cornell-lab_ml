@@ -14,6 +14,9 @@ from spectrograms import SpectrogramCreator
 from datasets import AudioDataset
 
 
+# Lightning Data Module.
+# I like the organization, and it has helped make it clearer how I get this 
+# data organized, setup, and moving along, so I am going to go with this for now.
 class BirdieDataModule(LightningDataModule):
 
 
@@ -32,6 +35,7 @@ class BirdieDataModule(LightningDataModule):
     def make_datasets(self, all_data, bird_codes):
         spectrogram_maker = SpectrogramCreator(self.sample_rate, 1024, 256, 64, 50, 8000)
         self.all_dataloader = DataLoader(AudioDataset(all_data, bird_codes, self.epoch_size, spectrogram_maker), batch_size=32, shuffle=True)
+        # Make as many Datasets as you have k-folds for train and valid data. 
         for split in range(max(all_data['validation_fold'])):
             valid_data = all_data.loc[all_data['validation_fold'] == split]
             train_data = all_data.loc[all_data['validation_fold'] != split]
@@ -47,6 +51,8 @@ class BirdieDataModule(LightningDataModule):
         skf = StratifiedKFold(n_splits=splits, shuffle=True, random_state=42)
         # Inputs to skf.split() are x and y data. y can be considered labels.
         testsplit = skf.split(songfiles_metadata, songfiles_metadata[target_varname])
+        # Add labels to the metadata DF indicating which fold data are part of
+        # In 0 to n-1 terms.
         for fold_id, (train_indices, val_indices) in enumerate(testsplit):
             songfiles_metadata.loc[val_indices, 'validation_fold'] = fold_id
         return songfiles_metadata
@@ -89,7 +95,6 @@ class BirdieDataModule(LightningDataModule):
 
     # Data prep to be done, but not in a multi-process way
     def prepare_data(self):
-        import pdb; pdb.set_trace()
         songfiles_metadata, self.bird_codes = self.get_file_paths()
         self.songfiles_metadata = self.kfold_sampling(songfiles_metadata, 'primary_label', 5)
         self.make_datasets(self.songfiles_metadata, self.bird_codes)

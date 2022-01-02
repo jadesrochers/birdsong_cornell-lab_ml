@@ -45,13 +45,22 @@ class SpectrogramCreator():
 
        self.batch_normal2d = nn.BatchNorm2d(mel_bins)
 
+    # Calculate frequency stuff for FFT, based on:
+    # https://stackoverflow.com/questions/4364823/how-do-i-obtain-the-frequencies-of-each-value-in-an-fft/4371627#4371627
+    def dft_frequencies(sample_size, sample_rate, bins):
+        freq_hz = []
+        conversion_factor = sample_size / 2 / bins
+        for f in range(bins):
+            f_hat = f * conversion_factor
+            freq_hz.append(f_hat * sample_rate / sample_size)
+        return freq_hz
 
     # Get a spectrogram using the torch librosa functions.
     # If I want to do augmentations, create another Class/Module to do that.
     def spectro_from_data(self, input, mixup_lambda=None):
         spectrogram = self.spectrogram_maker(input)
         logmel_spectro = self.logmel_extractor(spectrogram)
-        frequencies = dft_frequencies(self.window_size, self.sample_rate, self.bins)
+        # frequencies = dft_frequencies(self.window_size, self.sample_rate, self.bins)
         # self.spectro_plot(logmel_spectro, frequencies)
         return logmel_spectro
 
