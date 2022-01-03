@@ -57,20 +57,29 @@ class AudioDataset(Dataset):
 
     # Get training samples for a file. Will tacke the number of samples
     # specified with the length of each (epoch_size) in seconds.
-    def get_training_sample(self, data, sr, samples=5, epoch_size=5):
+    def get_training_sample(self, data, sr, row, samples=5, epoch_size=5):
+        # total observations given the config
+        total_obs = sr * epoch_size *  samples
         complete_epochs = int(len(data) / sr // epoch_size)
-        sampled_epochs = random.sample(list(range(complete_epochs)), samples)
-        sample_idxs = [(epoch * sr, (epoch + 1) * sr) for epoch in sampled_epochs]
-        spectros = []
-        for (start, end) in sample_idxs:
-            epoch_data = data[start:end]
-            epoch_tensor = torch.from_numpy(epoch_data).float()
-            # Unsqueeze because the spectrogram maker uses a conv1d and
-            # can accept 1 or more channels, so need channel nested even if
-            # there is only 1.
-            epoch_unsqueeze = epoch_tensor.unsqueeze(0)
-            spectros.append(self.spectrogram_maker.spectro_from_data(epoch_unsqueeze))
-        return spectros
+        time_series = []
+        if complete_epochs >= samples:
+            sampled_epochs = random.sample(list(range(complete_epochs)), samples)
+            sample_idxs = [(epoch * sr, (epoch + 1) * sr) for epoch in sampled_epochs]
+            for (start, end) in sample_idxs:
+                time_series.extend(data[start:end])
+        else:
+            shortfall = total_obs - len(data)
+            print('Data row : ', row, ' has shortfall: ', shortfall)
+            print('Complete Epoch shortfall: ', samples - complete_epochs)
+            time_series.extend(data)
+            time_series.extend(np.zeros(shortfall))
+        # Unsqueeze (nest the time series) because the spectrogram maker 
+        # uses a conv1d, which expects a set of series, even if the set == 1.
+        epoch_tensor = torch.FloatTensor(time_series)
+        epoch_unsqueeze = epoch_tensor.unsqueeze(0)
+        # Return just a single spectrogram for the whole sequence right now.
+        spectro = self.spectrogram_maker.spectro_from_data(epoch_unsqueeze)
+        return spectro
 
     # When predicting, do I just get the whole set of data?
     # That seems like a logical way to do it, but I will have to determine
@@ -105,7 +114,7 @@ class AudioDataset(Dataset):
         # Pad with zeros as needed, and then make a single spectrogram
         # out of the result.
         if(self.is_training):
-            spectros = self.get_training_sample(y, sr, samples=5, epoch_size=5)
+            spectros = self.get_training_sample(y, sr, row, samples=5, epoch_size=5)
         else:
             spectros = self.get_prediction_data(y, sr, epoch_limit=100)
 
@@ -137,8 +146,8 @@ class AudioDataset(Dataset):
         #labels[self.category_codes[ebird_code]] = 1
 
         return {"spectros": spectros,
-                "primary_target": row.primary_label,
-                "all_targets": row.all_targets}
+                "primary_label": row.primary_label,
+                "all_labels": row.all_labels}
 
 
 

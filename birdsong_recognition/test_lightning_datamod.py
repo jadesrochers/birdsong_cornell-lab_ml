@@ -13,9 +13,9 @@ test_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, 
 test_datamodule.prepare_data()
 validation_loaders = test_datamodule.val_dataloader()
 # This is how to get data out of a loader.
-for batch_idx, samples in enumerate(validation_loaders[0]):
+for batch_idx, spectro in enumerate(validation_loaders[0]):
     import pdb; pdb.set_trace()
-    print('At index : ', batch_idx, ' with samples: ', samples)
+    print('At index : ', batch_idx, ' with spectro: ', spectro)
 print('Done with testing the data module')
 
 
@@ -25,6 +25,13 @@ print('Done with testing the data module')
 #    file, so I may need to pre-emptively exclude files with too little
 #    data while also zero padding those with a good amount but 
 #    needing a filling out.
+# 1A. Two step analysis? - I have been thinking that the training may
+#     have a problem with training on blank or irrelevant stuff, and 
+#     if I only have it train on relevant signals it will do much better.
+#     Can incorporate this when you actually get it working.
+# 1B. I could also add an 'other' or set of categories that allows
+#     the model to identify sounds to specifically ignore, without
+#     giving them precise labels.
 
 # 2. The sample segments should probably be sequential because
 #    The data is best combined into one time series and then translated
