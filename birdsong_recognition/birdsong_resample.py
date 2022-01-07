@@ -32,6 +32,7 @@ def resample_rowdata(row, column_names, resample_to):
     newrow["resampled_sampling_rate"] = resample_to
     newrow["resampled_filename"] = row.filename.replace(".mp3", ".wav")
     newrow["resampled_channels"] = "1 (mono)"
+    # Need to make a DF to be able to correctly append to the file.
     newdf = pd.DataFrame([newrow.values.tolist()], columns=newrow.keys().tolist())
     newdf.to_csv('train_resample.csv', mode='a', index=False, header=False)
 
@@ -53,7 +54,7 @@ def resample(resample_to: int, df: pd.DataFrame):
         if not ebird_resamp_dir.exists():
             ebird_resamp_dir.mkdir(exist_ok=True, parents=True)
         # SKip file if it does already exist, but add to csv
-        if ebird_resamp_file.exists() and ebird_resamp_file.stat().st_size > 1000:
+        if ebird_resamp_file.exists() and ebird_resamp_file.stat().st_size > 10000:
             print('File already exists: ', ebird_resamp_file,'\n')
             resample_rowdata(row, column_names, resample_to)
             continue;

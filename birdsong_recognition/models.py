@@ -40,59 +40,6 @@ def init_bn(bn):
     bn.weight.data.fill_(1.0)
 
 
-## Using Conv1d layers to simulate an attention block.
-# nn.Linear and nn.Conv1d with kernel, step == 1 are essentially the same,
-# so when looking up implementations of Attn you can remember that aspect.
-# The Conv1d may be slower, but not majorly.
-class AttBlock(nn.Module):
-    def __init__(self,
-                 in_features: int,
-                 out_features: int,
-                 activation="linear",
-                 temperature=1.0):
-        super().__init__()
-
-        self.activation = activation
-        self.temperature = temperature
-        self.att = nn.Conv1d(
-            in_channels=in_features,
-            out_channels=out_features,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-            bias=True)
-        self.cla = nn.Conv1d(
-            in_channels=in_features,
-            out_channels=out_features,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-            bias=True)
-
-        self.bn_att = nn.BatchNorm1d(out_features)
-        self.init_weights()
-
-    def init_weights(self):
-        init_layer(self.att)
-        init_layer(self.cla)
-        init_bn(self.bn_att)
-
-    # x from torch.sum() gives a total sum for each out_feature for the input.
-    # cla and norm_att give outputs for each epoch of the input, with different
-    # activation setups. Don't know the why of those particularly.
-    def forward(self, x):
-        # x: (n_samples, n_in, n_time)
-        norm_att = torch.softmax(torch.tanh(self.att(x)), dim=-1)
-        cla = self.nonlinear_transform(self.cla(x))
-        x = torch.sum(norm_att * cla, dim=2)
-        return x, norm_att, cla
-
-    def nonlinear_transform(self, x):
-        if self.activation == 'linear':
-            return x
-        elif self.activation == 'sigmoid':
-            return torch.sigmoid(x)
-
 ## Then make the model that wraps it using attention and will set up the
 # actual segment/epoch and clip wise predictions.
 class PANNsDense121Att(nn.Module):
@@ -110,32 +57,34 @@ class PANNsDense121Att(nn.Module):
         # Spectrogram extractor
         # I thought the data loader would handle these things,
         # do I actually need them?
-        # Yes - I think the difference is that when training the loader
-        # is used due to train/test/validate and the many epochs
-        # but for predictions just a single set of data is fed separate 
-        # of the loaders.
-        self.spectrogram_extractor = Spectrogram(
-            n_fft=window_size,
-            hop_length=hop_size,
-            win_length=window_size,
-            window=window,
-            center=center,
-            pad_mode=pad_mode,
-            freeze_parameters=True)
+
+        # Was thinking Yes for predictions, but there is a predict
+        # dataloader as well in lightningDataModule, so it seems 
+        # like it is fine to handle it there instead of here.
+
+        #self.spectrogram_extractor = Spectrogram(
+        #    n_fft=window_size,
+        #    hop_length=hop_size,
+        #    win_length=window_size,
+        #    window=window,
+        #    center=center,
+        #    pad_mode=pad_mode,
+        #    freeze_parameters=True)
 
         # Logmel feature extractor
-        self.logmel_extractor = LogmelFilterBank(
-            sr=sample_rate,
-            n_fft=window_size,
-            n_mels=mel_bins,
-            fmin=fmin,
-            fmax=fmax,
-            ref=ref,
-            amin=amin,
-            top_db=top_db,
-            freeze_parameters=True)
+        #self.logmel_extractor = LogmelFilterBank(
+        #    sr=sample_rate,
+        #    n_fft=window_size,
+        #    n_mels=mel_bins,
+        #    fmin=fmin,
+        #    fmax=fmax,
+        #    ref=ref,
+        #    amin=amin,
+        #    top_db=top_db,
+        #    freeze_parameters=True)
 
-        # Spec augmenter
+        # Spec augmenter - Might also want to move this, but should
+        # incorporate it somewhere I think
         self.spec_augmenter = SpecAugmentation(
             time_drop_width=64,
             time_stripes_num=2,

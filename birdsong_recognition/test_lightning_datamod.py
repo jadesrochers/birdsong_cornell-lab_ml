@@ -12,10 +12,26 @@ epoch_size = 5
 test_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, sample_rate, epoch_size)
 test_datamodule.prepare_data()
 validation_loaders = test_datamodule.val_dataloader()
+train_loaders = test_datamodule.train_dataloader()
 # This is how to get data out of a loader.
 for batch_idx, spectro in enumerate(validation_loaders[0]):
     import pdb; pdb.set_trace()
-    print('At index : ', batch_idx, ' with spectro: ', spectro)
+    if batch_idx > 0:
+        break;
+    # print('At index : ', batch_idx, ' with spectro: ', spectro)
+
+for batch_idx, spectro in enumerate(validation_loaders[3]):
+    import pdb; pdb.set_trace()
+    if batch_idx > 0:
+        break;
+    # print('At index : ', batch_idx, ' with spectro: ', spectro)
+
+for batch_idx, spectro in enumerate(train_loaders[0]):
+    import pdb; pdb.set_trace()
+    if batch_idx > 0:
+        break;
+    # print('At index : ', batch_idx, ' with spectro: ', spectro)
+
 print('Done with testing the data module')
 
 

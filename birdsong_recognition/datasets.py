@@ -64,24 +64,28 @@ class AudioDataset(Dataset):
         time_series = []
         if complete_epochs >= samples:
             sampled_epochs = random.sample(list(range(complete_epochs)), samples)
-            sample_idxs = [(epoch * sr, (epoch + 1) * sr) for epoch in sampled_epochs]
+            sample_idxs = [(epoch * epoch_size * sr, (epoch * epoch_size + epoch_size) * sr) for epoch in sampled_epochs]
             for (start, end) in sample_idxs:
                 time_series.extend(data[start:end])
+            # print('Had enough epochs, length is: ', len(time_series))
         else:
             shortfall = total_obs - len(data)
-            print('Data row : ', row, ' has shortfall: ', shortfall)
-            print('Complete Epoch shortfall: ', samples - complete_epochs)
+            # print('Complete Epoch shortfall: ', samples - complete_epochs)
             time_series.extend(data)
             time_series.extend(np.zeros(shortfall))
+            # print('Did no have enough epochs, length is: ', len(time_series))
         # Unsqueeze (nest the time series) because the spectrogram maker 
         # uses a conv1d, which expects a set of series, even if the set == 1.
         epoch_tensor = torch.FloatTensor(time_series)
         epoch_unsqueeze = epoch_tensor.unsqueeze(0)
         # Return just a single spectrogram for the whole sequence right now.
         spectro = self.spectrogram_maker.spectro_from_data(epoch_unsqueeze)
+        print('Dims of the spectro: ', spectro.size(), '\n')
         return spectro
 
     # When predicting, do I just get the whole set of data?
+    # Or do I need to use the same length as the train set?
+    # I would say same length, unless SED is flexible enough to use any length.
     # That seems like a logical way to do it, but I will have to determine
     # how the model fits in.
     # 1. It seems like an Event Detection model should be able to predict
@@ -113,10 +117,11 @@ class AudioDataset(Dataset):
         # separate nested data.  
         # Pad with zeros as needed, and then make a single spectrogram
         # out of the result.
+        print('Current file: ', row.resampled_full_path)
         if(self.is_training):
-            spectros = self.get_training_sample(y, sr, row, samples=5, epoch_size=5)
+            spectro = self.get_training_sample(y, sr, row, samples=5, epoch_size=5)
         else:
-            spectros = self.get_prediction_data(y, sr, epoch_limit=100)
+            spectro = self.get_prediction_data(y, sr, epoch_limit=100)
 
         # I did not think I needed one-hot vector labels for torch;
         # add these back in if it is not working.
@@ -145,7 +150,7 @@ class AudioDataset(Dataset):
         # Does this set the label for the current code to 1 and all others to zero?
         #labels[self.category_codes[ebird_code]] = 1
 
-        return {"spectros": spectros,
+        return {"spectro": spectro,
                 "primary_label": row.primary_label,
                 "all_labels": row.all_labels}
 
