@@ -33,18 +33,17 @@ class BirdieDataModule(LightningDataModule):
 
 
     def make_datasets(self, all_data, bird_codes):
-        spectrogram_maker = SpectrogramCreator(self.sample_rate, 1024, 256, 64, 50, 8000)
-        self.all_dataloader = DataLoader(AudioDataset(all_data, bird_codes, self.epoch_size, spectrogram_maker), batch_size=self.batch_size, shuffle=True)
+        self.all_dataloader = DataLoader(AudioDataset(all_data, bird_codes, self.epoch_size), batch_size=self.batch_size, shuffle=True)
         # Make as many Datasets as you have k-folds for train and valid data. 
         for split in range(max(all_data['validation_fold'])):
             valid_data = all_data.loc[all_data['validation_fold'] == split]
             train_data = all_data.loc[all_data['validation_fold'] != split]
-            valid_dataset = AudioDataset(valid_data, bird_codes, self.epoch_size, spectrogram_maker)
-            train_dataset = AudioDataset(train_data, bird_codes, self.epoch_size, spectrogram_maker)
+            valid_dataset = AudioDataset(valid_data, bird_codes, self.epoch_size)
+            train_dataset = AudioDataset(train_data, bird_codes, self.epoch_size)
             # The collate_fn seems to be needed due to me returning
             # a map of data as opposed to a simple array/tensor.
-            self.valid_dataloaders.append(DataLoader(valid_dataset, batch_size=16, shuffle=False, collate_fn=lambda x: x))
-            self.train_dataloaders.append(DataLoader(train_dataset, batch_size=16, shuffle=False, collate_fn=lambda x: x))
+            self.valid_dataloaders.append(DataLoader(valid_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x))
+            self.train_dataloaders.append(DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x))
 
 
 
@@ -67,10 +66,11 @@ class BirdieDataModule(LightningDataModule):
         file_paths = []
         bird_labels = {}
         bird_number = 0;
-        data_csv = pd.read_csv(self.resample_audio_csv_filepath)
+        data_csv = pd.read_csv(self.resampled_audio_csv_filepath)
         data_csv['all_labels'] = np.empty((len(data_csv), 0)).tolist()
-        # Get the codes for the primary species in the recording, and add all the species
-        # names to the label dictionary for use later.
+        # Get the codes for the primary species in the recording, 
+        # and add all the species names to the label dictionary 
+        # for use later.
         for idx, row in data_csv.iterrows():
             ebird_code = row.ebird_code
             species_name = row.species
@@ -82,8 +82,8 @@ class BirdieDataModule(LightningDataModule):
             data_path = self.resampled_audio_dir / ebird_code / resampled_filename
             file_paths.append([bird_labels[row.ebird_code], row.ebird_code, resampled_filename, data_path])
 
-        # Get all the secondary labels, since the species names will now be in 
-        # the bird_labels dict.
+        # Get all the secondary labels, since the species names 
+        # will now be in # the bird_labels dict.
         for idx, row in data_csv.iterrows():
             row.all_labels.append(file_paths[idx][0])
             for bird in literal_eval(row.secondary_labels):
@@ -128,6 +128,5 @@ class BirdieDataModule(LightningDataModule):
     # to actually submit this thing will reserve this for the hidden data.
     def predict_dataloader(self):
         return self.all_dataloader
-
 
 

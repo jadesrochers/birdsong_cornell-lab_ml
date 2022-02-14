@@ -4,6 +4,23 @@ import numpy as np
 import torch
 from torch.nn import Module
 import torchvision.models as models
+from spectrograms import SpectrogramCreator
+from torch import nn
+
+
+# Initialization for layers in general, initialize weights and bias.
+# This allows using a particular initialization distribution, changing it.
+def init_layer(layer):
+    nn.init.xavier_uniform_(layer.weight)
+
+    if hasattr(layer, "bias"):
+        if layer.bias is not None:
+            layer.bias.data.fill_(0.)
+
+# Initialization for batch normalization layers
+def init_bn(bn):
+    bn.bias.data.fill_(0.)
+    bn.weight.data.fill_(1.0)
 
 ## Base Wrapper for a model available through torchvision, which has
 # datasets, models setups, and image transforms for computer vision.
@@ -27,7 +44,6 @@ class DenseNet121(Module):
 ## Using Conv1d layers to simulate an attention block.
 # nn.Linear and nn.Conv1d with kernel, step == 1 are essentially the same,
 # so when looking up implementations of Attn you can remember that aspect.
-# The Conv1d may be slower, but not majorly.
 class AttBlock(nn.Module):
     def __init__(self,
                  in_features: int,
@@ -38,6 +54,8 @@ class AttBlock(nn.Module):
 
         self.activation = activation
         self.temperature = temperature
+        # In Features should be number of spectrogram bands?
+        # Out features should be number of bird classes.
         self.att = nn.Conv1d(
             in_channels=in_features,
             out_channels=out_features,
@@ -80,8 +98,7 @@ class AttBlock(nn.Module):
 
 
 class BirdieModel121(LightningModule):
-    def __init__(self, sample_rate: int, window_size: int, hop_size: int,
-                 mel_bins: int, fmin: int, fmax: int, classes_num: int, apply_aug: bool, top_db=None):
+    def __init__(self, sample_rate: int, spectro_window_size: int, spectro_step_size: int, classes_num: int, apply_aug: bool, mel_bins: int=512, fmin: int=0, fmax: int=22050,):
         super().__init__()
         window = 'hann'
         center = True
@@ -90,6 +107,10 @@ class BirdieModel121(LightningModule):
         amin = 1e-10
         self.interpolate_ratio = 32  # Downsampled ratio
         self.apply_aug = apply_aug
+        self.sample_rate = sample_rate
+        self.spectro_window_size = spectro_window_size
+        self.spectro_step_size = spectro_step_size
+        self.loss_bce = nn.BCELoss(reduction='none')
 
         ## REASONS to do Transforms/Specto HERE -
         # Because I can do the logmel/spectro/augmentations on a GPU.
@@ -98,18 +119,23 @@ class BirdieModel121(LightningModule):
         # and that would allow me to leverage the torchlibrosa in a way the
         # DataLoader cannot.
 
+        # window_size is the spectrogram window size, not the analysis window.
+        # step_size is the moving window jump for that spetrogram window.
+        import pdb; pdb.set_trace()
+        self.spectrogram_maker = SpectrogramCreator(self.sample_rate, self.spectro_window_size, self.spectro_step_size)
+
         # I want to use an Augmenter somewhere, the data loader may
         # be the more appropriate place.
         # If incorporating into the Model here, probably use this in
         # on_before_batch_transfer(), which is designed for data augmentation. 
-        self.spec_augmenter = SpecAugmentation(
-            time_drop_width=64,
-            time_stripes_num=2,
-            freq_drop_width=8,
-            freq_stripes_num=2)
+        #self.spec_augmenter = SpecAugmentation(
+        #    time_drop_width=64,
+        #    time_stripes_num=2,
+        #    freq_drop_width=8,
+        #    freq_stripes_num=2)
 
-        self.bn0 = nn.BatchNorm2d(mel_bins)
-        self.fc1 = nn.Linear(1024, 1024, bias=True)
+        self.bn0 = nn.BatchNorm2d(self.spectrogram_maker.mel_bins)
+        self.fc1 = nn.Linear(self.spectro_window_size, self.spectro_window_size, bias=True)
         self.att_block = AttBlock(1024, classes_num, activation='sigmoid')
         self.densenet_features = models.densenet121(pretrained=True).features
         self.init_weight()
@@ -130,19 +156,28 @@ class BirdieModel121(LightningModule):
 
 
     # Do processing on the GPU but before doing train part
+    # I put the spectrogram generation here to leverage gpu/torchlibrosa
     def on_after_batch_transfer(self, batch_data, batch_idx):
-       
+        # If the whole batch is passed, may need to do this all in a 
+        # loop or something
+        print('Dims of the batch_data: ', batch_data.size)
+        spectro = self.spectrogram_maker.spectro_from_data(batch_data['time_series'])
+        print('Dims of the spectro: ', spectro.size(), '\n')
+        # Pass along the labels until I don't need them.
+        return {'spectro': spectro,
+                'primary_label': batch_data['primary_label'],
+                'all_labels': batch_data['all_labels']}
 
 
-    def forward(self, input_data):
-        input_x  = input_data
+    # Forward. Should get passed just the input data by the 
+    # train step, which will take the results from this and calc loss.
+    def forward(self, input_spectros):
         """
         Input: (batch_size, data_length)"""
-        b, c, s = input_x.shape
-        input_x = input_x.reshape(b*c, s)
+        b, c, s = input_spectros.shape
+        x = input_spectros.reshape(b*c, s)
 
         # Output shape (batch size, channels, time, frequency)
-        # Still don't get these dims, but DenseNet121 seems to want it.
         x = x.expand(x.shape[0], 3, x.shape[2], x.shape[3])
         x = self.cnn_feature_extractor(x)
 
@@ -177,6 +212,12 @@ class BirdieModel121(LightningModule):
 
 
     def training_step(self, batch, batch_idx):
-        data, primary_labels, all_labels = batch
-        rslt = self(data)
-        loss = self.loss_fcn(rslt, primary_labels, all_labels)
+        spectros, primary_labels, all_labels = batch
+        y_hat = self(spectros)
+        loss = self.loss_bce(y_hat, primary_labels)
+        return loss
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.config_params, lr=0.01)
+
+

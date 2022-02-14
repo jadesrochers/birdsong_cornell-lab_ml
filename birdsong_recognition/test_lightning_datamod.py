@@ -1,38 +1,49 @@
 
 from pathlib import Path
-from lightning_modules import BirdieDataModule
+from lightning_data_modules import BirdieDataModule
+from lightning_model_modules import BirdieModel121
+from pytorch_lightning import Trainer
 
 root_dir = Path.cwd()
 resample_audio_csv_file =  root_dir / 'train_resample.csv'
 resample_audio_dir =  root_dir / 'train_audio_resampled'
 
 sample_rate = 16000
+spectro_window_size = 1024
+spectro_step_size = 256
 # size in seconds
 epoch_size = 5
-test_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, sample_rate, epoch_size)
-test_datamodule.prepare_data()
-validation_loaders = test_datamodule.val_dataloader()
-train_loaders = test_datamodule.train_dataloader()
+batch_size = 32
+classes = 256
+mel_bins = 64
+birdie_model = BirdieModel121(sample_rate, spectro_window_size, spectro_step_size,classes, False, mel_bins)
+birdie_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, sample_rate, epoch_size, batch_size)
+birdie_datamodule.prepare_data()
+birdie_datamodule.setup()
+validation_loaders = birdie_datamodule.val_dataloader()
+train_loaders = birdie_datamodule.train_dataloader()
 # This is how to get data out of a loader.
 for batch_idx, spectro in enumerate(validation_loaders[0]):
     import pdb; pdb.set_trace()
-    if batch_idx > 0:
-        break;
+    break;
     # print('At index : ', batch_idx, ' with spectro: ', spectro)
 
 for batch_idx, spectro in enumerate(validation_loaders[3]):
     import pdb; pdb.set_trace()
-    if batch_idx > 0:
-        break;
+    break;
     # print('At index : ', batch_idx, ' with spectro: ', spectro)
 
 for batch_idx, spectro in enumerate(train_loaders[0]):
     import pdb; pdb.set_trace()
-    if batch_idx > 0:
-        break;
+    # if batch_idx > 0:
+    break;
     # print('At index : ', batch_idx, ' with spectro: ', spectro)
 
 print('Done with testing the data module')
+
+trainer = Trainer(gpus=1, max_epochs=2)
+trainer.fit(birdie_model, birdie_datamodule)
+
 
 
 ### The Overall Plan:

@@ -27,19 +27,17 @@ class AudioDataset(Dataset):
             file_list: pd.DataFrame,
             category_codes: Dict,
             period,
-            spectrogram_maker,
             is_training=True,
             waveform_transforms=None):
         self.file_list = file_list  # list of list: [file_path, ebird_code]
         self.category_codes = category_codes
         self.waveform_transforms = waveform_transforms
-        self.spectrogram_maker = spectrogram_maker
         self.is_training = is_training
         # This is the length of epoch?
         # Is there any way to get anything except the first epoch?
         self.period = period
 
-    # Important; this must be implemented
+    # This must be implemented
     def __len__(self):
         return len(self.file_list)
 
@@ -74,14 +72,16 @@ class AudioDataset(Dataset):
             time_series.extend(data)
             time_series.extend(np.zeros(shortfall))
             # print('Did no have enough epochs, length is: ', len(time_series))
-        # Unsqueeze (nest the time series) because the spectrogram maker 
-        # uses a conv1d, which expects a set of series, even if the set == 1.
+        # Unsqueeze (nest the time series) because torch librosa 
+        # spectrogram maker uses conv1d, 
         epoch_tensor = torch.FloatTensor(time_series)
-        epoch_unsqueeze = epoch_tensor.unsqueeze(0)
+        series_unsqueeze = epoch_tensor.unsqueeze(0)
         # Return just a single spectrogram for the whole sequence right now.
-        spectro = self.spectrogram_maker.spectro_from_data(epoch_unsqueeze)
-        print('Dims of the spectro: ', spectro.size(), '\n')
-        return spectro
+        return series_unsqueeze
+        #spectro = self.spectrogram_maker.spectro_from_data(epoch_unsqueeze)
+        #print('Dims of the spectro: ', spectro.size(), '\n')
+        #return spectro
+
 
     # When predicting, do I just get the whole set of data?
     # Or do I need to use the same length as the train set?
@@ -103,9 +103,9 @@ class AudioDataset(Dataset):
             epoch_data = data[start:end]
             epoch_tensor = torch.from_numpy(epoch_data).float()
             # See training data note about unsqueeze
-            epoch_unsqueeze = epoch_tensor.unsqueeze(0)
-            spectros.append(self.spectrogram_maker.spectro_from_data(epoch_unsqueeze))
-        return spectros
+            series_unsqueeze = epoch_tensor.unsqueeze(0)
+            # spectros.append(self.spectrogram_maker.spectro_from_data(epoch_unsqueeze))
+        return series_unsqueeze
 
 
     # Get the code, filename. Load the data, sample a set of epochs from the 
@@ -119,9 +119,9 @@ class AudioDataset(Dataset):
         # out of the result.
         print('Current file: ', row.resampled_full_path)
         if(self.is_training):
-            spectro = self.get_training_sample(y, sr, row, samples=5, epoch_size=5)
+            time_series = self.get_training_sample(y, sr, row, samples=5, epoch_size=5)
         else:
-            spectro = self.get_prediction_data(y, sr, epoch_limit=100)
+            time_series = self.get_prediction_data(y, sr, epoch_limit=100)
 
         # I did not think I needed one-hot vector labels for torch;
         # add these back in if it is not working.
@@ -150,7 +150,7 @@ class AudioDataset(Dataset):
         # Does this set the label for the current code to 1 and all others to zero?
         #labels[self.category_codes[ebird_code]] = 1
 
-        return {"spectro": spectro,
+        return {"time_series": time_series,
                 "primary_label": row.primary_label,
                 "all_labels": row.all_labels}
 
