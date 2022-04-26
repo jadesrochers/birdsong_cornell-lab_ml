@@ -96,7 +96,7 @@ class AttBlock(nn.Module):
             return torch.sigmoid(x)
 
 
-
+# This is a variant on a denseNet121
 class BirdieModel121(LightningModule):
     def __init__(self, sample_rate: int, spectro_window_size: int, spectro_step_size: int, classes_num: int, apply_aug: bool, mel_bins: int=512, fmin: int=0, fmax: int=22050,):
         super().__init__()
@@ -111,6 +111,7 @@ class BirdieModel121(LightningModule):
         self.spectro_window_size = spectro_window_size
         self.spectro_step_size = spectro_step_size
         self.loss_bce = nn.BCELoss(reduction='none')
+        self.classes_num = classes_num
 
         ## REASONS to do Transforms/Specto HERE -
         # Because I can do the logmel/spectro/augmentations on a GPU.
@@ -121,7 +122,6 @@ class BirdieModel121(LightningModule):
 
         # window_size is the spectrogram window size, not the analysis window.
         # step_size is the moving window jump for that spetrogram window.
-        import pdb; pdb.set_trace()
         self.spectrogram_maker = SpectrogramCreator(self.sample_rate, self.spectro_window_size, self.spectro_step_size)
 
         # I want to use an Augmenter somewhere, the data loader may
@@ -136,6 +136,7 @@ class BirdieModel121(LightningModule):
 
         self.bn0 = nn.BatchNorm2d(self.spectrogram_maker.mel_bins)
         self.fc1 = nn.Linear(self.spectro_window_size, self.spectro_window_size, bias=True)
+        # THe Attn block needs to take the number
         self.att_block = AttBlock(1024, classes_num, activation='sigmoid')
         self.densenet_features = models.densenet121(pretrained=True).features
         self.init_weight()
@@ -155,18 +156,33 @@ class BirdieModel121(LightningModule):
         return x
 
 
+    def get_binary_labels(self, indices):
+        labels = []
+        for i, index_set in enumerate(indices):
+           labels.append(np.zeros(self.classes_num, dtype="f"))
+           for index in index_set:
+               labels[i][index] = 1
+        return labels
+
     # Do processing on the GPU but before doing train part
     # I put the spectrogram generation here to leverage gpu/torchlibrosa
     def on_after_batch_transfer(self, batch_data, batch_idx):
         # If the whole batch is passed, may need to do this all in a 
         # loop or something
-        print('Dims of the batch_data: ', batch_data.size)
-        spectro = self.spectrogram_maker.spectro_from_data(batch_data['time_series'])
-        print('Dims of the spectro: ', spectro.size(), '\n')
+        print('Dims of the batch_data: ', len(batch_data))
+        spectro = []
+        for input in batch_data:
+          spectro.append(self.spectrogram_maker.spectro_from_data(input['time_series']))
+        primary_labels = [[data['primary_label']] for data in batch_data ]
+        all_labels = [data['all_labels'] for data in batch_data ]
+        import pdb; pdb.set_trace()
+        primary_binary_labels = self.get_binary_labels(primary_labels)
+        all_binary_labels = self.get_binary_labels(all_labels)
+        print('Number of mel spectrograms: ', len(spectro), '\n')
         # Pass along the labels until I don't need them.
         return {'spectro': spectro,
-                'primary_label': batch_data['primary_label'],
-                'all_labels': batch_data['all_labels']}
+                'primary_label': primary_binary_labels,
+                'all_labels': all_binary_labels}
 
 
     # Forward. Should get passed just the input data by the 
@@ -194,6 +210,8 @@ class BirdieModel121(LightningModule):
         x = x.transpose(1, 2)
         x = F.dropout(x, p=0.5, training=self.training)
 
+        # The attn block takes the output from the densenet121 with a few 
+        # operations done to it but the dimensions unmodified.
         (clipwise_output, norm_att, segmentwise_output) = self.att_block(x)
         segmentwise_output = segmentwise_output.transpose(1, 2)
 
@@ -203,6 +221,8 @@ class BirdieModel121(LightningModule):
         framewise_output = pad_framewise_output(framewise_output, frames_num)
         frame_shape =  framewise_output.shape
         clip_shape = clipwise_output.shape
+        # Framewise/segment is each section of data, clipwise is prediction 
+        # for the whole audio clip.
         output_dict = {
             'framewise_output': framewise_output.reshape(b, c, frame_shape[1],frame_shape[2]),
             'clipwise_output': clipwise_output.reshape(b, c, clip_shape[1]),
@@ -211,13 +231,32 @@ class BirdieModel121(LightningModule):
         return output_dict
 
 
+    # The purpose of this is to return loss
     def training_step(self, batch, batch_idx):
+        # You can use the epoch/subsegment data, the full recording data,
+        # or some combination of both. You need to decide what make the
+        # most sense regarding labels and segments.
+        import pdb; pdb.set_trace()
         spectros, primary_labels, all_labels = batch
         y_hat = self(spectros)
+        # Simple method right now is to just use primary labels
         loss = self.loss_bce(y_hat, primary_labels)
         return loss
 
+
+    # just doing a direct copy of the training_step at the moment,
+    # need to get this going to see some predictions.
+    def validation_step(self, batch, batch_idx):
+        spectros, primary_labels, all_labels = batch
+        y_hat = self(spectros)
+        # Simple method right now is to just use primary labels
+        loss = self.loss_bce(y_hat, primary_labels)
+        return loss
+
+
     def configure_optimizers(self):
-        return torch.optim.Adam(self.config_params, lr=0.01)
+        # I don't have any configuration params at the moment
+        # return torch.optim.Adam(self.config_params, lr=0.01)
+        return torch.optim.Adam(self.parameters(), lr=0.01)
 
 

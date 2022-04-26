@@ -159,5 +159,3 @@ if __name__ == "__main__":
     songfiles_metadata, bird_codes = get_file_paths()
     import pdb; pdb.set_trace()
     songfiles_metadata = kfold_sampling(songfiles_metadata, 'primary_label', 5)
-    make_datasets(songfiles_metadata, songfiles_metadata, bird_codes)
-    print('Finished with data grabbing, sampling')
