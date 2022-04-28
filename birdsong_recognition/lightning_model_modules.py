@@ -170,18 +170,18 @@ class BirdieModel121(LightningModule):
         # If the whole batch is passed, may need to do this all in a 
         # loop or something
         print('Dims of the batch_data: ', len(batch_data))
+        # Probably need to set this up as a tensor
         spectro = []
         for input in batch_data:
           spectro.append(self.spectrogram_maker.spectro_from_data(input['time_series']))
         primary_labels = [[data['primary_label']] for data in batch_data ]
         all_labels = [data['all_labels'] for data in batch_data ]
-        import pdb; pdb.set_trace()
         primary_binary_labels = self.get_binary_labels(primary_labels)
         all_binary_labels = self.get_binary_labels(all_labels)
         print('Number of mel spectrograms: ', len(spectro), '\n')
         # Pass along the labels until I don't need them.
-        return {'spectro': spectro,
-                'primary_label': primary_binary_labels,
+        return {'spectros': spectro,
+                'primary_labels': primary_binary_labels,
                 'all_labels': all_binary_labels}
 
 
@@ -189,7 +189,9 @@ class BirdieModel121(LightningModule):
     # train step, which will take the results from this and calc loss.
     def forward(self, input_spectros):
         """
-        Input: (batch_size, data_length)"""
+        Input: (batch_size, data_length)
+        """
+        import pdb; pdb.set_trace()
         b, c, s = input_spectros.shape
         x = input_spectros.reshape(b*c, s)
 
@@ -237,7 +239,10 @@ class BirdieModel121(LightningModule):
         # or some combination of both. You need to decide what make the
         # most sense regarding labels and segments.
         import pdb; pdb.set_trace()
-        spectros, primary_labels, all_labels = batch
+        spectros = batch['spectros']
+        primary_labels  = batch['primary_labels']
+        all_labels = batch['all_labels']
+
         y_hat = self(spectros)
         # Simple method right now is to just use primary labels
         loss = self.loss_bce(y_hat, primary_labels)
@@ -246,8 +251,12 @@ class BirdieModel121(LightningModule):
 
     # just doing a direct copy of the training_step at the moment,
     # need to get this going to see some predictions.
-    def validation_step(self, batch, batch_idx):
-        spectros, primary_labels, all_labels = batch
+    def validation_step(self, batch, batch_idx, dataset_idx):
+        import pdb; pdb.set_trace()
+        spectros = batch['spectros']
+        primary_labels  = batch['primary_labels']
+        all_labels = batch['all_labels']
+
         y_hat = self(spectros)
         # Simple method right now is to just use primary labels
         loss = self.loss_bce(y_hat, primary_labels)
