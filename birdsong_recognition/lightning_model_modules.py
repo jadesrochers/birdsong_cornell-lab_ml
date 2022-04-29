@@ -171,16 +171,18 @@ class BirdieModel121(LightningModule):
         # loop or something
         print('Dims of the batch_data: ', len(batch_data))
         # Probably need to set this up as a tensor
-        spectro = []
+        spectros = torch.tensor([]).cuda(self.device)
         for input in batch_data:
-          spectro.append(self.spectrogram_maker.spectro_from_data(input['time_series']))
+            new_spectro = self.spectrogram_maker.spectro_from_data(input['time_series'])
+            import pdb; pdb.set_trace()
+            spectros = torch.cat((spectros, new_spectro), dim=1)
         primary_labels = [[data['primary_label']] for data in batch_data ]
         all_labels = [data['all_labels'] for data in batch_data ]
         primary_binary_labels = self.get_binary_labels(primary_labels)
         all_binary_labels = self.get_binary_labels(all_labels)
         print('Number of mel spectrograms: ', len(spectro), '\n')
         # Pass along the labels until I don't need them.
-        return {'spectros': spectro,
+        return {'spectros': spectros,
                 'primary_labels': primary_binary_labels,
                 'all_labels': all_binary_labels}
 

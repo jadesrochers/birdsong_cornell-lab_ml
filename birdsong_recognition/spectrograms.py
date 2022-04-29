@@ -91,6 +91,8 @@ class SpectrogramCreator():
         logmel_spectro = self.logmel_extractor(spectrogram)
         # frequencies = dft_frequencies(self.window_size, self.sample_rate, self.bins)
         # self.spectro_plot(logmel_spectro, frequencies)
+        # if input.get_device() > -1:
+        #     logmel_spectro.cuda(input.get_device())
         return logmel_spectro
 
 

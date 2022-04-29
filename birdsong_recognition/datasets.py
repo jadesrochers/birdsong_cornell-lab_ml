@@ -117,7 +117,7 @@ class AudioDataset(Dataset):
         # separate nested data.  
         # Pad with zeros as needed, and then make a single spectrogram
         # out of the result.
-        print('Current file: ', row.resampled_full_path)
+        # print('Audiodataset got: ', row.resampled_full_path)
         if(self.is_training):
             time_series = self.get_training_sample(y, sr, row, samples=5, epoch_size=5)
         else:
