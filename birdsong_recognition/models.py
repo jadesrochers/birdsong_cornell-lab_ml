@@ -11,14 +11,15 @@ class DenseNet121(nn.Module):
     def __init__(self, pretrained=True, num_classes=6):
         super().__init__()
         self.densenet = models.densenet121(pretrained=pretrained)
-        self.densenet.classifier = torch.nn.Linear(1024, num_classes)
         self.num_classes = num_classes
+        self.densenet.classifier = torch.nn.Linear(1024, num_classes)
 
-    def forward(self, x):  # batch_size, 3, a, b
-        bs, seq, c, h, w = x.shape
-        x = x.reshape(bs*seq,c,h,w)
+    # Densenets take 3 x H x W, make sure H/W are in this order.
+    def forward(self, x):  # batch_sz, 3, H, W 
+        # bs, seq, c, h, w = x.shape
+        # x = x.reshape(bs*seq,c,h,w)
         x = self.densenet(x)
-        x = x.reshape(bs, seq, self.num_classes)
+        # x = x.reshape(bs, seq, self.num_classes)
         return x
 
 
@@ -44,7 +45,7 @@ def init_bn(bn):
 # actual segment/epoch and clip wise predictions.
 class PANNsDense121Att(nn.Module):
     def __init__(self, sample_rate: int, window_size: int, hop_size: int,
-                 mel_bins: int, fmin: int, fmax: int, classes_num: int, apply_aug: bool, top_db=None):
+                 mel_bins: int, fmin: int, fmax: int, num_classes: int, apply_aug: bool, top_db=None):
         super().__init__()
         window = 'hann'
         center = True
@@ -94,7 +95,7 @@ class PANNsDense121Att(nn.Module):
         self.bn0 = nn.BatchNorm2d(mel_bins)
 
         self.fc1 = nn.Linear(1024, 1024, bias=True)
-        self.att_block = AttBlock(1024, classes_num, activation='sigmoid')
+        self.att_block = AttBlock(1024, num_classes, activation='sigmoid')
 
 
         self.densenet_features = models.densenet121(pretrained=True).features
@@ -138,7 +139,7 @@ class PANNsDense121Att(nn.Module):
             b = (b*c)//2
             c = 1
         # Output shape (batch size, channels, time, frequency)
-        x = x.expand(x.shape[0], 3, x.shape[2], x.shape[3])
+        # x = x.expand(x.shape[0], 3, x.shape[2], x.shape[3])
         x = self.cnn_feature_extractor(x)
         # Aggregate in frequency axis
         x = torch.mean(x, dim=3)

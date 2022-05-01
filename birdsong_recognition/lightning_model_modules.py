@@ -3,9 +3,11 @@ import pandas as pd
 import numpy as np
 import torch
 from torch.nn import Module
+from torch.nn import functional as F
 import torchvision.models as models
 from spectrograms import SpectrogramCreator
 from torch import nn
+from models import DenseNet121
 
 
 # Initialization for layers in general, initialize weights and bias.
@@ -22,23 +24,58 @@ def init_bn(bn):
     bn.bias.data.fill_(0.)
     bn.weight.data.fill_(1.0)
 
+
+def interpolate(x: torch.Tensor, ratio: int):
+    """Interpolate data in time domain. This is used to compensate the
+    resolution reduction in downsampling of a CNN.
+    Args:
+      x: (batch_size, time_steps, classes_num)
+      ratio: int, ratio to interpolate
+    Returns:
+      upsampled: (batch_size, time_steps * ratio, classes_num)
+    """
+    (batch_size, time_steps, classes_num) = x.shape
+    upsampled = x[:, :, None, :].repeat(1, 1, ratio, 1)
+    upsampled = upsampled.reshape(batch_size, time_steps * ratio, classes_num)
+    return upsampled
+
+
+def pad_framewise_output(framewise_output: torch.Tensor, frames_num: int):
+    """Pad framewise_output to the same length as input frames. The pad value
+    is the same as the value of the last frame.
+    Args:
+      framewise_output: (batch_size, frames_num, classes_num)
+      frames_num: int, number of frames to pad
+    Outputs:
+      output: (batch_size, frames_num, classes_num)
+    """
+    pad = framewise_output[:, -1:, :].repeat(
+        1, frames_num - framewise_output.shape[1], 1)
+    """tensor for padding"""
+
+    output = torch.cat((framewise_output, pad), dim=1)
+    """(batch_size, frames_num, classes_num)"""
+
+    return output
+
+
 ## Base Wrapper for a model available through torchvision, which has
 # datasets, models setups, and image transforms for computer vision.
 # 1. Starting with this model because it was the core of the competition
 #    winners setup.
-class DenseNet121(Module):
-    def __init__(self, pretrained=True, num_classes=6):
-        super().__init__()
-        self.densenet = models.densenet121(pretrained=pretrained)
-        self.densenet.classifier = torch.nn.Linear(1024, num_classes)
-        self.num_classes = num_classes
-
-    def forward(self, x):  # batch_size, 3, a, b
-        bs, seq, c, h, w = x.shape
-        x = x.reshape(bs*seq,c,h,w)
-        x = self.densenet(x)
-        x = x.reshape(bs, seq, self.num_classes)
-        return x
+# class DenseNet121(Module):
+#    def __init__(self, pretrained=True, num_classes=6):
+#        super().__init__()
+#        self.densenet = models.densenet121(pretrained=pretrained)
+#        self.densenet.classifier = torch.nn.Linear(1024, num_classes)
+#        self.num_classes = num_classes
+#
+#    def forward(self, x):  # batch_size, 3, a, b
+#        bs, seq, c, h, w = x.shape
+#        x = x.reshape(bs*seq,c,h,w)
+#        x = self.densenet(x)
+#        x = x.reshape(bs, seq, self.num_classes)
+#        return x
 
 
 ## Using Conv1d layers to simulate an attention block.
@@ -98,7 +135,7 @@ class AttBlock(nn.Module):
 
 # This is a variant on a denseNet121
 class BirdieModel121(LightningModule):
-    def __init__(self, sample_rate: int, spectro_window_size: int, spectro_step_size: int, classes_num: int, apply_aug: bool, mel_bins: int=512, fmin: int=0, fmax: int=22050,):
+    def __init__(self, sample_rate: int, spectro_window_size: int, spectro_step_size: int, num_classes: int, apply_aug: bool, mel_bins: int=512, fmin: int=0, fmax: int=22050,):
         super().__init__()
         window = 'hann'
         center = True
@@ -111,14 +148,11 @@ class BirdieModel121(LightningModule):
         self.spectro_window_size = spectro_window_size
         self.spectro_step_size = spectro_step_size
         self.loss_bce = nn.BCELoss(reduction='none')
-        self.classes_num = classes_num
+        self.num_classes = num_classes
 
         ## REASONS to do Transforms/Specto HERE -
-        # Because I can do the logmel/spectro/augmentations on a GPU.
-        # There are methods set up in the LightningModule to do operations
-        # on data at very specific times, including after transfer to GPU/TPU,
-        # and that would allow me to leverage the torchlibrosa in a way the
-        # DataLoader cannot.
+        # Because I can do the logmel/spectro/augmentations on a GPU,
+        # unlike the DataLoader, which is not ready-made to use GPU.
 
         # window_size is the spectrogram window size, not the analysis window.
         # step_size is the moving window jump for that spetrogram window.
@@ -136,22 +170,22 @@ class BirdieModel121(LightningModule):
 
         self.bn0 = nn.BatchNorm2d(self.spectrogram_maker.mel_bins)
         self.fc1 = nn.Linear(self.spectro_window_size, self.spectro_window_size, bias=True)
-        # THe Attn block needs to take the number
-        self.att_block = AttBlock(1024, classes_num, activation='sigmoid')
+        # The Attn block needs to take the number
+        self.att_block = AttBlock(1024, num_classes, activation='sigmoid')
+        # get rid of this, use the wrapped version from models module.
+        # self.densenet_features = DenseNet121(pretrained=True, num_classes=num_classes).densenet.features
         self.densenet_features = models.densenet121(pretrained=True).features
+        # DenseNet121(pretrained=True, num_classes=num_classes).densenet.features
         self.init_weight()
 
     def init_weight(self):
         init_bn(self.bn0)
         init_layer(self.fc1)
 
-    # This would probably be called in on_before_batch_transfer() which is 
-    # designed for data_augmentations and modification before the data 
-    # gets passed to the device (TPU/GPU).
-    # If it will be better to do this after transferring to device
-    # for parallel purposes, on_after_batch_transfer() is the method to impl.
-    # Probably better after transfer; take advantage of the GPU.
+
+    # Called as part of forward.
     def cnn_feature_extractor(self, x):
+        # Do I need to put this in eval, or do something else?
         x = self.densenet_features(x)
         return x
 
@@ -159,7 +193,7 @@ class BirdieModel121(LightningModule):
     def get_binary_labels(self, indices):
         labels = []
         for i, index_set in enumerate(indices):
-           labels.append(np.zeros(self.classes_num, dtype="f"))
+           labels.append(np.zeros(self.num_classes, dtype="f"))
            for index in index_set:
                labels[i][index] = 1
         return labels
@@ -174,17 +208,47 @@ class BirdieModel121(LightningModule):
         spectros = torch.tensor([]).cuda(self.device)
         for input in batch_data:
             new_spectro = self.spectrogram_maker.spectro_from_data(input['time_series'])
-            import pdb; pdb.set_trace()
-            spectros = torch.cat((spectros, new_spectro), dim=1)
+            spectros = torch.cat((spectros, new_spectro))
+        spectros = torch.squeeze(spectros)
+        spectros = torch.unsqueeze(spectros, dim=1)
         primary_labels = [[data['primary_label']] for data in batch_data ]
         all_labels = [data['all_labels'] for data in batch_data ]
         primary_binary_labels = self.get_binary_labels(primary_labels)
         all_binary_labels = self.get_binary_labels(all_labels)
-        print('Number of mel spectrograms: ', len(spectro), '\n')
+        print('Mel spectrograms dims: ', spectros.size(), '\n')
         # Pass along the labels until I don't need them.
         return {'spectros': spectros,
                 'primary_labels': primary_binary_labels,
                 'all_labels': all_binary_labels}
+
+
+    # The purpose of this is to return loss, typically by calling 
+    # self() which invokes the forward() method.  
+    def training_step(self, batch, batch_idx):
+        # You can use the epoch/subsegment data, the full recording data,
+        # or some combination of both. You need to decide what make the
+        # most sense regarding labels and segments.
+        spectros = batch['spectros']
+        primary_labels  = batch['primary_labels']
+        all_labels = batch['all_labels']
+
+        y_hat = self(spectros)
+        # Simple method right now is to just use primary labels
+        loss = self.loss_bce(y_hat, primary_labels)
+        return loss
+
+
+    # just doing a direct copy of the training_step at the moment,
+    # need to get this going to see some predictions.
+    def validation_step(self, batch, batch_idx, dataset_idx):
+        spectros = batch['spectros']
+        primary_labels  = batch['primary_labels']
+        all_labels = batch['all_labels']
+
+        y_hat = self(spectros)
+        # Simple method right now is to just use primary labels
+        loss = self.loss_bce(y_hat, primary_labels)
+        return loss
 
 
     # Forward. Should get passed just the input data by the 
@@ -194,14 +258,18 @@ class BirdieModel121(LightningModule):
         Input: (batch_size, data_length)
         """
         import pdb; pdb.set_trace()
-        b, c, s = input_spectros.shape
-        x = input_spectros.reshape(b*c, s)
+        # x = input_spectros.reshape(b*c, s)
+        # Get the spectrograms in terms of HxW
+        x = torch.transpose(input_spectros, 2, 3)
+        batchsz, emptysz, melH, melW = x.shape
 
         # Output shape (batch size, channels, time, frequency)
-        x = x.expand(x.shape[0], 3, x.shape[2], x.shape[3])
+        # x = x.expand(x.shape[0], 3, x.shape[1], x.shape[2])
+        x = x.expand(batchsz, 3, melH, melW)
         x = self.cnn_feature_extractor(x)
 
-        # Aggregate in frequency axis
+        # Aggregate in frequency axis - isn't the densenet already 
+        # doing this?
         x = torch.mean(x, dim=3)
 
         x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
@@ -227,42 +295,13 @@ class BirdieModel121(LightningModule):
         clip_shape = clipwise_output.shape
         # Framewise/segment is each section of data, clipwise is prediction 
         # for the whole audio clip.
+        import pdb; pdb.set_trace()
         output_dict = {
-            'framewise_output': framewise_output.reshape(b, c, frame_shape[1],frame_shape[2]),
-            'clipwise_output': clipwise_output.reshape(b, c, clip_shape[1]),
+            'framewise_output': framewise_output.reshape(batchsz, melW, frame_shape[1],frame_shape[2]),
+            'clipwise_output': clipwise_output.reshape(batchsz, melW, clip_shape[1]),
         }
 
         return output_dict
-
-
-    # The purpose of this is to return loss
-    def training_step(self, batch, batch_idx):
-        # You can use the epoch/subsegment data, the full recording data,
-        # or some combination of both. You need to decide what make the
-        # most sense regarding labels and segments.
-        import pdb; pdb.set_trace()
-        spectros = batch['spectros']
-        primary_labels  = batch['primary_labels']
-        all_labels = batch['all_labels']
-
-        y_hat = self(spectros)
-        # Simple method right now is to just use primary labels
-        loss = self.loss_bce(y_hat, primary_labels)
-        return loss
-
-
-    # just doing a direct copy of the training_step at the moment,
-    # need to get this going to see some predictions.
-    def validation_step(self, batch, batch_idx, dataset_idx):
-        import pdb; pdb.set_trace()
-        spectros = batch['spectros']
-        primary_labels  = batch['primary_labels']
-        all_labels = batch['all_labels']
-
-        y_hat = self(spectros)
-        # Simple method right now is to just use primary labels
-        loss = self.loss_bce(y_hat, primary_labels)
-        return loss
 
 
     def configure_optimizers(self):
