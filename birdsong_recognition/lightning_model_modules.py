@@ -259,17 +259,21 @@ class BirdieModel121(LightningModule):
         """
         import pdb; pdb.set_trace()
         # x = input_spectros.reshape(b*c, s)
+        # NOTE: It seems that WxH is fine too; the important thing is that
+        # you keep track of which is which.
         # Get the spectrograms in terms of HxW
-        x = torch.transpose(input_spectros, 2, 3)
-        batchsz, emptysz, melH, melW = x.shape
+        # x = torch.transpose(input_spectros, 2, 3)
+        batchsz, emptysz, melW, melH = input_spectros.shape
 
         # Output shape (batch size, channels, time, frequency)
         # x = x.expand(x.shape[0], 3, x.shape[1], x.shape[2])
-        x = x.expand(batchsz, 3, melH, melW)
+        x = input_spectros.expand(batchsz, 3, melW, melH)
         x = self.cnn_feature_extractor(x)
 
         # Aggregate in frequency axis - isn't the densenet already 
         # doing this?
+        # This seems to be only if the densenet does not fully
+        # collapse the frequency dimension.
         x = torch.mean(x, dim=3)
 
         x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
@@ -284,13 +288,21 @@ class BirdieModel121(LightningModule):
 
         # The attn block takes the output from the densenet121 with a few 
         # operations done to it but the dimensions unmodified.
+        # If the dimensions are correct, the clipwise_output should collapse
+        # the 3rd dimension, time, while the segmentwise_output
+        # should preserve it.  
         (clipwise_output, norm_att, segmentwise_output) = self.att_block(x)
         segmentwise_output = segmentwise_output.transpose(1, 2)
 
-        # Get framewise output
+        # Get framewise output - The interpolation should take the reduced
+        # time dimension and re-expand it to the original size.
         framewise_output = interpolate(segmentwise_output,
                                        self.interpolate_ratio)
         framewise_output = pad_framewise_output(framewise_output, frames_num)
+
+        # The outputs should be standardized in shape, with one having
+        # an output for each spectrogram frame time step, and the clip
+        # summarizing over the whole clip.
         frame_shape =  framewise_output.shape
         clip_shape = clipwise_output.shape
         # Framewise/segment is each section of data, clipwise is prediction 
