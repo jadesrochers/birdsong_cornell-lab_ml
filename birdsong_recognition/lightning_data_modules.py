@@ -19,11 +19,12 @@ from datasets import AudioDataset
 class BirdieDataModule(LightningDataModule):
 
 
-    def __init__(self, csv_path, data_path, sample_rate, epoch_size=5, batch_size=32):
+    def __init__(self, csv_path, data_path, sample_rate, spectro_window_size, epoch_size=5, batch_size=32):
         self.resampled_audio_csv_filepath = csv_path
         self.resampled_audio_dir = data_path
         self.sample_rate = sample_rate
         self.epoch_size = epoch_size
+        self.spectro_window_size = spectro_window_size
         self.batch_size = batch_size
         self.songfiles_metadata = pd.DataFrame()
         self.bird_codes = {}
@@ -33,13 +34,13 @@ class BirdieDataModule(LightningDataModule):
 
 
     def make_datasets(self, all_data, bird_codes):
-        self.all_dataloader = DataLoader(AudioDataset(all_data, bird_codes, self.epoch_size), batch_size=self.batch_size, shuffle=True)
+        self.all_dataloader = DataLoader(AudioDataset(all_data, bird_codes, self.epoch_size, self.spectro_window_size), batch_size=self.batch_size, shuffle=True)
         # Make as many Datasets as you have k-folds for train and valid data. 
         for split in range(max(all_data['validation_fold'])):
             valid_data = all_data.loc[all_data['validation_fold'] == split]
             train_data = all_data.loc[all_data['validation_fold'] != split]
-            valid_dataset = AudioDataset(valid_data, bird_codes, self.epoch_size)
-            train_dataset = AudioDataset(train_data, bird_codes, self.epoch_size)
+            valid_dataset = AudioDataset(valid_data, bird_codes, self.epoch_size, self.spectro_window_size)
+            train_dataset = AudioDataset(train_data, bird_codes, self.epoch_size, self.spectro_window_size)
             # The collate_fn seems to be needed due to me returning
             # a map of data as opposed to a simple array/tensor.
             self.valid_dataloaders.append(DataLoader(valid_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x))

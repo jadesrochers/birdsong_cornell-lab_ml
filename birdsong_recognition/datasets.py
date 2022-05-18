@@ -3,6 +3,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import random
+import math
 from torch.utils.data import Dataset
 from typing import List, Dict
 
@@ -26,7 +27,9 @@ class AudioDataset(Dataset):
             self,
             file_list: pd.DataFrame,
             category_codes: Dict,
-            period,
+            epoch_size,
+            spectro_window_size,
+            samples=5,
             is_training=True,
             waveform_transforms=None):
         self.file_list = file_list  # list of list: [file_path, ebird_code]
@@ -35,7 +38,10 @@ class AudioDataset(Dataset):
         self.is_training = is_training
         # This is the length of epoch?
         # Is there any way to get anything except the first epoch?
-        self.period = period
+        self.epoch_size = epoch_size
+        self.spectro_window_size = spectro_window_size
+        self.samples = samples
+
 
     # This must be implemented
     def __len__(self):
@@ -55,19 +61,19 @@ class AudioDataset(Dataset):
 
     # Get training samples for a file. Will tacke the number of samples
     # specified with the length of each (epoch_size) in seconds.
-    def get_training_sample(self, data, sr, row, samples=5, epoch_size=5):
+    def get_training_sample(self, data, sr, row, samples=5):
         # total observations given the config
-        total_obs = sr * epoch_size *  samples
-        complete_epochs = int(len(data) / sr // epoch_size)
+        # total_obs = sr * epoch_size *  samples
+        complete_epochs = int(len(data) // self.epoch_obs)
         time_series = []
         if complete_epochs >= samples:
             sampled_epochs = random.sample(list(range(complete_epochs)), samples)
-            sample_idxs = [(epoch * epoch_size * sr, (epoch * epoch_size + epoch_size) * sr) for epoch in sampled_epochs]
+            sample_idxs = [(epoch * self.epoch_obs, epoch * self.epoch_obs + self.epoch_obs) for epoch in sampled_epochs]
             for (start, end) in sample_idxs:
                 time_series.extend(data[start:end])
             # print('Had enough epochs, length is: ', len(time_series))
         else:
-            shortfall = total_obs - len(data)
+            shortfall = self.total_obs - len(data)
             # print('Complete Epoch shortfall: ', samples - complete_epochs)
             time_series.extend(data)
             time_series.extend(np.zeros(shortfall))
@@ -94,10 +100,11 @@ class AudioDataset(Dataset):
     # 2. Maybe having a length that evenly divides into the epochs will
     #    be important however, so perhaps I should do that here.
     def get_prediction_data(self, data, sr, epoch_limit=100):
-        complete_epochs = int(len(data) / sr // epoch_size)
+        complete_epochs = int(len(data) // self.epoch_obs)
+        # complete_epochs = int(len(data) / sr // epoch_size)
         analyze_epochs = epoch_limit if complete_epochs > epoch_limit else complete_epochs
         prediction_epochs = list(range(analyze_epochs))
-        spectro_idxs = [(epoch * sr, (epoch + 1) * sr) for epoch in prediction_epochs]
+        spectro_idxs = [(epoch * self.epoch_obs, (epoch + 1) * self.epoch_obs) for epoch in prediction_epochs]
         spectros = []
         for (start, end) in sample_idxs:
             epoch_data = data[start:end]
@@ -112,6 +119,12 @@ class AudioDataset(Dataset):
     def __getitem__(self, idx: int):
         row = self.file_list.iloc[idx, :]
         y, sr = sf.read(row.resampled_full_path)
+        # Calculate a # of epoch obs based on the greatest whole number of
+        # observations that divide evenly by the spectrogram step
+        bins_per_epoch = math.ceil(math.ceil((self.epoch_size * sr * self.samples) / self.spectro_window_size) / self.samples)
+        self.total_obs = int(bins_per_epoch * self.samples * self.spectro_window_size)
+        self.epoch_obs = int(bins_per_epoch * self.spectro_window_size)
+
         # Problems: I need to change this to deal with data files that are
         # too short, and to deal with the fact that I should not return
         # separate nested data.  
@@ -119,7 +132,7 @@ class AudioDataset(Dataset):
         # out of the result.
         # print('Audiodataset got: ', row.resampled_full_path)
         if(self.is_training):
-            time_series = self.get_training_sample(y, sr, row, samples=5, epoch_size=5)
+            time_series = self.get_training_sample(y, sr, row, samples=5)
         else:
             time_series = self.get_prediction_data(y, sr, epoch_limit=100)
 

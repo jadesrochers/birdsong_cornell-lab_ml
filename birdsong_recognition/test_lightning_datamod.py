@@ -18,7 +18,7 @@ classes = 264
 mel_bins = 40
 # import pdb; pdb.set_trace()
 birdie_model = BirdieModel121(sample_rate, spectro_window_size, spectro_step_size,classes, False, mel_bins)
-birdie_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, sample_rate, epoch_size, batch_size)
+birdie_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, sample_rate, spectro_window_size, epoch_size, batch_size)
 birdie_datamodule.prepare_data()
 birdie_datamodule.setup()
 validation_loaders = birdie_datamodule.val_dataloader()

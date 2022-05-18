@@ -12,7 +12,7 @@ class SpectrogramCreator():
        ref = 1.0
        amin = 1e-9
        top_db = None
-       # downsampled ratio. How can I know this in advance?
+       # downsampled ratio. Derived from the CNN model you use
        self.interpolate_ratio = 32
        self.sample_rate = sample_rate
        self.window_size = window_size

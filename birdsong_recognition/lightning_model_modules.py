@@ -2,11 +2,11 @@ from pytorch_lightning import LightningModule, Trainer
 import pandas as pd
 import numpy as np
 import torch
-from torch.nn import Module
-from torch.nn import functional as F
 import torchvision.models as models
 from spectrograms import SpectrogramCreator
 from torch import nn
+from torch.nn import Module
+from torch.nn import functional as F
 from models import DenseNet121
 
 
@@ -25,7 +25,7 @@ def init_bn(bn):
     bn.weight.data.fill_(1.0)
 
 
-def interpolate(x: torch.Tensor, ratio: int):
+def interpolate(x: torch.Tensor, ratio: int, raw_length: int):
     """Interpolate data in time domain. This is used to compensate the
     resolution reduction in downsampling of a CNN.
     Args:
@@ -37,6 +37,12 @@ def interpolate(x: torch.Tensor, ratio: int):
     (batch_size, time_steps, classes_num) = x.shape
     upsampled = x[:, :, None, :].repeat(1, 1, ratio, 1)
     upsampled = upsampled.reshape(batch_size, time_steps * ratio, classes_num)
+    # If length is slightly off, make it exactly the same as before.
+    batch, time, classes = upsampled.shape
+    pad = torch.zeros(batch, raw_length - time, classes).cuda(upsampled.get_device())
+    if pad.shape[0] > 0:
+        upsampled = torch.cat((upsampled, pad), 1)
+    # upsampled = F.pad(upsampled, raw_length,'constant',0)
     return upsampled
 
 
@@ -76,6 +82,12 @@ def pad_framewise_output(framewise_output: torch.Tensor, frames_num: int):
 #        x = self.densenet(x)
 #        x = x.reshape(bs, seq, self.num_classes)
 #        return x
+
+# Do this earlier on, since you need these labels for any BCE
+def convert_to_binary(numeric_labels, out_features):
+    return [1 if i in numeric_labels else 0 for i in range(out_features)]
+    :w
+    :wa
 
 
 ## Using Conv1d layers to simulate an attention block.
@@ -135,14 +147,16 @@ class AttBlock(nn.Module):
 
 # This is a variant on a denseNet121
 class BirdieModel121(LightningModule):
-    def __init__(self, sample_rate: int, spectro_window_size: int, spectro_step_size: int, num_classes: int, apply_aug: bool, mel_bins: int=512, fmin: int=0, fmax: int=22050,):
+    def __init__(self, sample_rate: int, spectro_window_size: int, spectro_step_size: int, num_classes: int, apply_aug: bool, mel_bins: int=64, fmin: int=0, fmax: int=22050,):
         super().__init__()
         window = 'hann'
         center = True
         pad_mode = 'reflect'
         ref = 1.0
         amin = 1e-10
-        self.interpolate_ratio = 32  # Downsampled ratio
+        # DenseNet121 does 2 stride down sampling 5 times, so /32
+        # in terms of downsampling ratio 
+        self.downsample_ratio = 32
         self.apply_aug = apply_aug
         self.sample_rate = sample_rate
         self.spectro_window_size = spectro_window_size
@@ -154,8 +168,15 @@ class BirdieModel121(LightningModule):
         # Because I can do the logmel/spectro/augmentations on a GPU,
         # unlike the DataLoader, which is not ready-made to use GPU.
 
-        # window_size is the spectrogram window size, not the analysis window.
-        # step_size is the moving window jump for that spetrogram window.
+        # The dataset will automatically pick an epoch/data size
+        # to match the spectro step, which should be a power of 
+        # 2 to make sure the fft is in use.
+        # TODO: I could try and also set the step to the total # of steps
+        # will divide evenly by the model down/up sample, though
+        # this will heavily limit the steps I can choose.
+
+
+        # step_size is the moving window jump for spectrogram calculation.
         self.spectrogram_maker = SpectrogramCreator(self.sample_rate, self.spectro_window_size, self.spectro_step_size)
 
         # I want to use an Augmenter somewhere, the data loader may
@@ -203,11 +224,14 @@ class BirdieModel121(LightningModule):
     def on_after_batch_transfer(self, batch_data, batch_idx):
         # If the whole batch is passed, may need to do this all in a 
         # loop or something
-        print('Dims of the batch_data: ', len(batch_data))
+        print('Batch size: ', len(batch_data))
+        print('Shape of data: ', len(batch_data[0]['time_series'].shape))
         # Probably need to set this up as a tensor
         spectros = torch.tensor([]).cuda(self.device)
         for input in batch_data:
+            print('\nInput data series shape: ', input['time_series'].shape)
             new_spectro = self.spectrogram_maker.spectro_from_data(input['time_series'])
+            print('Spectro shape: ', new_spectro.shape)
             spectros = torch.cat((spectros, new_spectro))
         spectros = torch.squeeze(spectros)
         spectros = torch.unsqueeze(spectros, dim=1)
@@ -234,7 +258,8 @@ class BirdieModel121(LightningModule):
 
         y_hat = self(spectros)
         # Simple method right now is to just use primary labels
-        loss = self.loss_bce(y_hat, primary_labels)
+        import pdb; pdb.set_trace()
+        loss = self.loss_bce(y_hat['clipwise_output'], primary_labels)
         return loss
 
 
@@ -247,7 +272,7 @@ class BirdieModel121(LightningModule):
 
         y_hat = self(spectros)
         # Simple method right now is to just use primary labels
-        loss = self.loss_bce(y_hat, primary_labels)
+        loss = self.loss_bce(y_hat', primary_labels)
         return loss
 
 
@@ -257,7 +282,6 @@ class BirdieModel121(LightningModule):
         """
         Input: (batch_size, data_length)
         """
-        import pdb; pdb.set_trace()
         # x = input_spectros.reshape(b*c, s)
         # NOTE: It seems that WxH is fine too; the important thing is that
         # you keep track of which is which.
@@ -273,7 +297,8 @@ class BirdieModel121(LightningModule):
         # Aggregate in frequency axis - isn't the densenet already 
         # doing this?
         # This seems to be only if the densenet does not fully
-        # collapse the frequency dimension.
+        # collapse the frequency dimension, which if I do mel_spec
+        # bins=40, it will already be collapsed.
         x = torch.mean(x, dim=3)
 
         x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
@@ -289,16 +314,18 @@ class BirdieModel121(LightningModule):
         # The attn block takes the output from the densenet121 with a few 
         # operations done to it but the dimensions unmodified.
         # If the dimensions are correct, the clipwise_output should collapse
-        # the 3rd dimension, time, while the segmentwise_output
-        # should preserve it.  
+        # the 3rd dimension, time.
+        # The segmentwise_output should preserve it, but with reduced 
+        # resolution according to the parameters of the densenet121.  
         (clipwise_output, norm_att, segmentwise_output) = self.att_block(x)
         segmentwise_output = segmentwise_output.transpose(1, 2)
 
         # Get framewise output - The interpolation should take the reduced
         # time dimension and re-expand it to the original size.
+        # Use the downsampling and raw size to re-expand.
         framewise_output = interpolate(segmentwise_output,
-                                       self.interpolate_ratio)
-        framewise_output = pad_framewise_output(framewise_output, frames_num)
+                                       self.downsample_ratio, melW)
+        # framewise_output = pad_framewise_output(framewise_output, frames_num)
 
         # The outputs should be standardized in shape, with one having
         # an output for each spectrogram frame time step, and the clip
@@ -307,10 +334,12 @@ class BirdieModel121(LightningModule):
         clip_shape = clipwise_output.shape
         # Framewise/segment is each section of data, clipwise is prediction 
         # for the whole audio clip.
-        import pdb; pdb.set_trace()
+
+        # TODO: might need to reshape these, but for now just going to pass
+        # them along until I determine how
         output_dict = {
-            'framewise_output': framewise_output.reshape(batchsz, melW, frame_shape[1],frame_shape[2]),
-            'clipwise_output': clipwise_output.reshape(batchsz, melW, clip_shape[1]),
+            'framewise_output': framewise_output,
+            'clipwise_output': clipwise_output
         }
 
         return output_dict
