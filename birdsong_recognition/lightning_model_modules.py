@@ -84,10 +84,12 @@ def pad_framewise_output(framewise_output: torch.Tensor, frames_num: int):
 #        return x
 
 # Do this earlier on, since you need these labels for any BCE
-def convert_to_binary(numeric_labels, out_features):
-    return [1 if i in numeric_labels else 0 for i in range(out_features)]
-    :w
-    :wa
+def convert_labels_to_binary(classes, numeric_labels, device):
+    binary_labels = torch.zeros(len(numeric_labels), classes).cuda(device)
+    for batch_idx, labels in enumerate(numeric_labels):
+        for label in labels:
+            binary_labels[batch_idx][label] = 1
+    return binary_labels
 
 
 ## Using Conv1d layers to simulate an attention block.
@@ -134,15 +136,24 @@ class AttBlock(nn.Module):
     def forward(self, x):
         # x: (n_samples, n_in, n_time)
         norm_att = torch.softmax(torch.tanh(self.att(x)), dim=-1)
-        cla = self.nonlinear_transform(self.cla(x))
+        cla = torch.softmax(self.cla(x), dim=-1)
         x = torch.sum(norm_att * cla, dim=2)
         return x, norm_att, cla
 
+    # When this is used, loss was not working because it was not 0-1
     def nonlinear_transform(self, x):
         if self.activation == 'linear':
             return x
         elif self.activation == 'sigmoid':
             return torch.sigmoid(x)
+
+
+
+
+#for clip_out in y_hat['clipwise_output']:
+#    for num in clip_out:
+#        if num <=0 or num >=1:
+#            print('num was out of range: ', num)
 
 
 # This is a variant on a denseNet121
@@ -192,7 +203,7 @@ class BirdieModel121(LightningModule):
         self.bn0 = nn.BatchNorm2d(self.spectrogram_maker.mel_bins)
         self.fc1 = nn.Linear(self.spectro_window_size, self.spectro_window_size, bias=True)
         # The Attn block needs to take the number
-        self.att_block = AttBlock(1024, num_classes, activation='sigmoid')
+        self.att_block = AttBlock(1024, num_classes)
         # get rid of this, use the wrapped version from models module.
         # self.densenet_features = DenseNet121(pretrained=True, num_classes=num_classes).densenet.features
         self.densenet_features = models.densenet121(pretrained=True).features
@@ -219,26 +230,25 @@ class BirdieModel121(LightningModule):
                labels[i][index] = 1
         return labels
 
+
     # Do processing on the GPU but before doing train part
     # I put the spectrogram generation here to leverage gpu/torchlibrosa
     def on_after_batch_transfer(self, batch_data, batch_idx):
-        # If the whole batch is passed, may need to do this all in a 
-        # loop or something
-        print('Batch size: ', len(batch_data))
-        print('Shape of data: ', len(batch_data[0]['time_series'].shape))
-        # Probably need to set this up as a tensor
+        print('Input data batch size: ', len(batch_data))
+        import pdb; pdb.set_trace()
         spectros = torch.tensor([]).cuda(self.device)
         for input in batch_data:
-            print('\nInput data series shape: ', input['time_series'].shape)
+            # print('Input data series shape: ', input['time_series'].shape)
             new_spectro = self.spectrogram_maker.spectro_from_data(input['time_series'])
-            print('Spectro shape: ', new_spectro.shape)
+            # print('Spectro shape: ', new_spectro.shape)
             spectros = torch.cat((spectros, new_spectro))
         spectros = torch.squeeze(spectros)
         spectros = torch.unsqueeze(spectros, dim=1)
         primary_labels = [[data['primary_label']] for data in batch_data ]
         all_labels = [data['all_labels'] for data in batch_data ]
-        primary_binary_labels = self.get_binary_labels(primary_labels)
-        all_binary_labels = self.get_binary_labels(all_labels)
+        # Tensors of binary labels for all/primary, and secondary if you find a use for that.
+        primary_binary_labels = convert_labels_to_binary(self.num_classes, primary_labels, self.device)
+        all_binary_labels = convert_labels_to_binary(self.num_classes, all_labels, self.device)
         print('Mel spectrograms dims: ', spectros.size(), '\n')
         # Pass along the labels until I don't need them.
         return {'spectros': spectros,
@@ -272,7 +282,7 @@ class BirdieModel121(LightningModule):
 
         y_hat = self(spectros)
         # Simple method right now is to just use primary labels
-        loss = self.loss_bce(y_hat', primary_labels)
+        loss = self.loss_bce(y_hat['clipwise_output'], primary_labels)
         return loss
 
 
