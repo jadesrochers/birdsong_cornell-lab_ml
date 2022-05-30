@@ -10,6 +10,7 @@ import re
 from ast import literal_eval
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from torch.utils.data import DataLoader
+from torch.utils.data.dataset import Dataset, Subset
 from spectrograms import SpectrogramCreator
 from datasets import AudioDataset
 
@@ -33,31 +34,65 @@ class BirdieDataModule(LightningDataModule):
         self.all_dataloader = None
 
 
-    def make_datasets(self, all_data, bird_codes):
-        self.all_dataloader = DataLoader(AudioDataset(all_data, bird_codes, self.epoch_size, self.spectro_window_size), batch_size=self.batch_size, shuffle=True)
-        # Make as many Datasets as you have k-folds for train and valid data. 
-        for split in range(max(all_data['validation_fold'])):
-            valid_data = all_data.loc[all_data['validation_fold'] == split]
-            train_data = all_data.loc[all_data['validation_fold'] != split]
-            valid_dataset = AudioDataset(valid_data, bird_codes, self.epoch_size, self.spectro_window_size)
-            train_dataset = AudioDataset(train_data, bird_codes, self.epoch_size, self.spectro_window_size)
-            # The collate_fn seems to be needed due to me returning
-            # a map of data as opposed to a simple array/tensor.
-            self.valid_dataloaders.append(DataLoader(valid_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x))
-            self.train_dataloaders.append(DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x))
+    # Data prep to be done, but not in a multi-process way
+    def prepare_data(self):
+        self.songfiles_metadata, self.bird_codes = self.get_file_paths()
+        # self.songfiles_metadata = self.kfold_sampling(songfiles_metadata, 'primary_label', 5)
 
 
+    # Setup is performed before any of the dataloader methods are called.
+    # will be distributed across gpus if possible.
+    # If I want to do a train/test split, this would be a good place.
+    # not doing that right now.
+    # def setup(self, stage=None):
+    #     # For fit, get train/validate data.
+    #     if stage == "fit" or stage is None:
+    #         self.make_datasets(self.songfiles_metadata, self.bird_codes)
 
-    def kfold_sampling(self, songfiles_metadata, target_varname, splits=5):
-        songfiles_metadata['validation_fold'] = -1
+    
+    # Make the folds, but don't do anything with them yet.
+    # Use stratified kfold since grous are small and I don't want to 
+    # skip one on various trains.
+    def setup_folds(self, target_varname, splits=5):
         skf = StratifiedKFold(n_splits=splits, shuffle=True, random_state=42)
-        # Inputs to skf.split() are x and y data. y can be considered labels.
-        testsplit = skf.split(songfiles_metadata, songfiles_metadata[target_varname])
-        # Add labels to the metadata DF indicating which fold data are part of
-        # In 0 to n-1 terms.
-        for fold_id, (train_indices, val_indices) in enumerate(testsplit):
-            songfiles_metadata.loc[val_indices, 'validation_fold'] = fold_id
-        return songfiles_metadata
+        # Inputs to skf.split() are the whole dataframe and the 
+        # labels to stratify by.
+        splitter = skf.split(self.songfiles_metadata, self.songfiles_metadata[target_varname])
+        self.splits = [split for split in splitter]
+ 
+
+    def setup_fold_index(self, fold_index):
+        train_indices, val_indices = self.splits(fold_index)
+        self.train_fold = Subset(self.songfiles_metadata, train_indices)
+        self.val_fold = Subset(self.songfiles_metadata, val_indices)
+
+
+    # def kfold_sampling(self, songfiles_metadata, target_varname, splits=5):
+    #     songfiles_metadata['validation_fold'] = -1
+    #     skf = StratifiedKFold(n_splits=splits, shuffle=True, random_state=42)
+    #     # Inputs to skf.split() are x and y data. y can be considered labels.
+    #     testsplit = skf.split(songfiles_metadata, songfiles_metadata[target_varname])
+    #     # Add labels to the metadata DF indicating which fold data are part of
+    #     # In 0 to n-1 terms.
+    #     for fold_id, (train_indices, val_indices) in enumerate(testsplit):
+    #         songfiles_metadata.loc[val_indices, 'validation_fold'] = fold_id
+    #     return songfiles_metadata
+
+
+
+    # def make_datasets(self, all_data, bird_codes):
+    #     self.all_dataloader = DataLoader(AudioDataset(all_data, bird_codes, self.epoch_size, self.spectro_window_size), batch_size=self.batch_size, shuffle=True)
+    #     # Make as many Datasets as you have k-folds for train and valid data. 
+    #     for split in range(max(all_data['validation_fold'])):
+    #         valid_data = all_data.loc[all_data['validation_fold'] == split]
+    #         train_data = all_data.loc[all_data['validation_fold'] != split]
+    #         valid_dataset = AudioDataset(valid_data, bird_codes, self.epoch_size, self.spectro_window_size)
+    #         train_dataset = AudioDataset(train_data, bird_codes, self.epoch_size, self.spectro_window_size)
+    #         # The collate_fn seems to be needed due to me returning
+    #         # a map of data as opposed to a simple array/tensor.
+    #         self.valid_dataloaders.append(DataLoader(valid_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x))
+    #         self.train_dataloaders.append(DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x))
+
 
 
     # Don't know If arbitrary methods are fine, but going to package
@@ -96,38 +131,25 @@ class BirdieDataModule(LightningDataModule):
         return pd.DataFrame(file_paths, columns=["primary_label", "label_text", "resampled_filename", "resampled_full_path", "all_labels"]), bird_labels
 
 
-    # Data prep to be done, but not in a multi-process way
-    def prepare_data(self):
-        songfiles_metadata, self.bird_codes = self.get_file_paths()
-        self.songfiles_metadata = self.kfold_sampling(songfiles_metadata, 'primary_label', 5)
-
-
-    # Setup is performed before any of the dataloader methods are called.
-    # will be distributed across gpus if possible.
-    # The spectros are still made in the DataLoader.
-    # this is just making the DataLoaders, not actually making spectros.
-    def setup(self, stage=None):
-        # For fit, get train/validate data.
-        if stage == "fit" or stage is None:
-            self.make_datasets(self.songfiles_metadata, self.bird_codes)
-
     # Handles loading all the training data. If I want to be consistent, will
     # Have to make separate train loaders for each validation split.
     def train_dataloader(self):
-        return self.train_dataloaders
+        return AudioDataset(self.train_fold, self.bird_codes, self.epoch_size, self.spectro_window_size)
 
     # Validation data. This can take an array of dataloaders, so for k-folds
     # I think I will try that.
     def val_dataloader(self):
-        return self.valid_dataloaders
+        return AudioDataset(self.val_fold, self.bird_codes, self.epoch_size, self.spectro_window_size)
+        # return self.valid_dataloaders
 
     # Test data is a set put aside to test the model once it has completed 
-    # training, not during training like validation. Plan to skip this.
+    # training, not during training like validation. 
+    # Not going to do this right now.
     # def test_dataloader(self):
 
-    # I will likely just predict on the whole set trained on, if I decide
-    # to actually submit this thing will reserve this for the hidden data.
+    # I will likely just predict on the whole set trained on, 
+    # I am just trying to get it working right now
     def predict_dataloader(self):
-        return self.all_dataloader
+        return AudioDataset(self.songfiles_metadata, self.ebird_codes, self.epoch_size, self.spectro_window_size)
 
 
