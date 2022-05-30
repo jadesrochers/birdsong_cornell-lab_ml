@@ -2,6 +2,7 @@
 from pathlib import Path
 from lightning_data_modules import BirdieDataModule
 from lightning_model_modules import BirdieModel121
+from lightning_loop_module import KFoldLoop
 from pytorch_lightning import Trainer
 
 root_dir = Path.cwd()
@@ -16,19 +17,20 @@ epoch_size = 5
 batch_size = 32
 classes = 264
 mel_bins = 40
-# import pdb; pdb.set_trace()
 birdie_model = BirdieModel121(sample_rate, spectro_window_size, spectro_step_size,classes, False, mel_bins)
 birdie_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, sample_rate, spectro_window_size, epoch_size, batch_size)
 birdie_datamodule.prepare_data()
-birdie_datamodule.setup()
-validation_loaders = birdie_datamodule.val_dataloader()
-train_loaders = birdie_datamodule.train_dataloader()
+# birdie_datamodule.setup()
+birdie_datamodule.setup_folds('primary_label')
+birdie_datamodule.setup_fold_index(0)
+val_loader = birdie_datamodule.val_dataloader()
+train_loader = birdie_datamodule.train_dataloader()
 # This is how to get data out of a loader.
-#for batch_idx, spectro in enumerate(validation_loaders[0]):
-    # import pdb; pdb.set_trace()
-#    break;
-    # print('At index : ', batch_idx, ' with spectro: ', spectro)
+for batch_idx, data in enumerate(val_loader):
+    print('At index : ', batch_idx, ' with data: ', data)
+    break;
 
+import pdb; pdb.set_trace()
 #for batch_idx, spectro in enumerate(validation_loaders[3]):
     # import pdb; pdb.set_trace()
 #    break;
@@ -42,7 +44,11 @@ train_loaders = birdie_datamodule.train_dataloader()
 
 print('Done with testing the data module')
 
+
 trainer = Trainer(gpus=1, max_epochs=2)
+internal_fit_loop = trainer.fit_loop
+trainer.fit_loop = KFoldLoop(5, export_path="./")
+trainer.fit_loop.connect(internal_fit_loop)
 trainer.fit(birdie_model, birdie_datamodule)
 
 

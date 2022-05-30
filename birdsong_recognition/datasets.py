@@ -117,6 +117,7 @@ class AudioDataset(Dataset):
 
     # Get the code, filename. Load the data, sample a set of epochs from the 
     def __getitem__(self, idx: int):
+        import pdb; pdb.set_trace()
         row = self.file_list.iloc[idx, :]
         y, sr = sf.read(row.resampled_full_path)
         # Calculate a # of epoch obs based on the greatest whole number of

@@ -5,9 +5,9 @@ from typing import Any, Dict, List, Optional, Type
 from copy import deepcopy
 
 
-# Custom loop. This will end up doing a lot of the work the model might
-# have, but it allows doing something like using different validation
-# folds that was not possible at the model module level.
+# Custom loop to allow for kfolds validation. 
+# This was a new addition in lightning 1.5, so it was not available
+# or was very new when I started working on the birdsong side project.
 class KFoldLoop(Loop):
     def __init__(self, num_folds: int, export_path: str) -> None:
         super().__init__()

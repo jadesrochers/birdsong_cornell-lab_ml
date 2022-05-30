@@ -53,7 +53,7 @@ class BirdieDataModule(LightningDataModule):
     # Make the folds, but don't do anything with them yet.
     # Use stratified kfold since grous are small and I don't want to 
     # skip one on various trains.
-    def setup_folds(self, target_varname, splits=5):
+    def setup_folds(self, target_varname='primary_label', splits=5):
         skf = StratifiedKFold(n_splits=splits, shuffle=True, random_state=42)
         # Inputs to skf.split() are the whole dataframe and the 
         # labels to stratify by.
@@ -62,7 +62,7 @@ class BirdieDataModule(LightningDataModule):
  
 
     def setup_fold_index(self, fold_index):
-        train_indices, val_indices = self.splits(fold_index)
+        train_indices, val_indices = self.splits[fold_index]
         self.train_fold = Subset(self.songfiles_metadata, train_indices)
         self.val_fold = Subset(self.songfiles_metadata, val_indices)
 
