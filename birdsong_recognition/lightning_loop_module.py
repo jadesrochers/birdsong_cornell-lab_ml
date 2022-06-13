@@ -27,8 +27,11 @@ class KFoldLoop(Loop):
 
     def on_run_start(self, *args, **kwargs) -> None:
         """Used to call `setup_folds` from the `BirdieDataModule` and store the original weights of the model."""
-        # Who needs type checking.
+        # Who needs type checking. Removed this for now.
         # assert isinstance(self.trainer.datamodule, BaseKFoldDataModule)
+
+        # If you want to change the stratification column, pass target_varname
+        # arg here.
         self.trainer.datamodule.setup_folds(self.num_folds)
         self.lightning_module_state_dict = deepcopy(self.trainer.lightning_module.state_dict())
 

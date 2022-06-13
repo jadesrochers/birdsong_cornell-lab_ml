@@ -21,28 +21,27 @@ birdie_model = BirdieModel121(sample_rate, spectro_window_size, spectro_step_siz
 birdie_datamodule = BirdieDataModule(resample_audio_csv_file, resample_audio_dir, sample_rate, spectro_window_size, epoch_size, batch_size)
 birdie_datamodule.prepare_data()
 # birdie_datamodule.setup()
-birdie_datamodule.setup_folds('primary_label')
-birdie_datamodule.setup_fold_index(0)
-val_loader = birdie_datamodule.val_dataloader()
-train_loader = birdie_datamodule.train_dataloader()
+# birdie_datamodule.setup_folds('primary_label')
+# birdie_datamodule.setup_fold_index(0)
+# val_loader = birdie_datamodule.val_dataloader()
+# train_loader = birdie_datamodule.train_dataloader()
 # This is how to get data out of a loader.
-for batch_idx, data in enumerate(val_loader):
-    print('At index : ', batch_idx, ' with data: ', data)
-    break;
+# for batch_idx, data in enumerate(val_loader):
+#     print('At index : ', batch_idx, ' with data: ', data)
+#     if batch_idx > 0:
+#         break;
 
-import pdb; pdb.set_trace()
 #for batch_idx, spectro in enumerate(validation_loaders[3]):
     # import pdb; pdb.set_trace()
 #    break;
     # print('At index : ', batch_idx, ' with spectro: ', spectro)
 
-#for batch_idx, spectro in enumerate(train_loaders[0]):
-    # import pdb; pdb.set_trace()
-    # if batch_idx > 0:
-#    break;
-    # print('At index : ', batch_idx, ' with spectro: ', spectro)
+# for batch_idx, spectro in enumerate(train_loader):
+#      print('At index : ', batch_idx, ' with spectro: ', spectro)
+#      if batch_idx > 0:
+#          break;
 
-print('Done with testing the data module')
+# print('Done with testing the data module')
 
 
 trainer = Trainer(gpus=1, max_epochs=2)

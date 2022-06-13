@@ -42,18 +42,15 @@ class BirdieDataModule(LightningDataModule):
 
     # Setup is performed before any of the dataloader methods are called.
     # will be distributed across gpus if possible.
-    # If I want to do a train/test split, this would be a good place.
-    # not doing that right now.
-    # def setup(self, stage=None):
-    #     # For fit, get train/validate data.
-    #     if stage == "fit" or stage is None:
-    #         self.make_datasets(self.songfiles_metadata, self.bird_codes)
+    def setup(self, stage=None):
+        self.setup_folds()
+        self.setup_fold_index(0)
 
     
     # Make the folds, but don't do anything with them yet.
     # Use stratified kfold since grous are small and I don't want to 
     # skip one on various trains.
-    def setup_folds(self, target_varname='primary_label', splits=5):
+    def setup_folds(self, splits=5, target_varname='primary_label'):
         skf = StratifiedKFold(n_splits=splits, shuffle=True, random_state=42)
         # Inputs to skf.split() are the whole dataframe and the 
         # labels to stratify by.
@@ -64,7 +61,7 @@ class BirdieDataModule(LightningDataModule):
     def setup_fold_index(self, fold_index):
         train_indices, val_indices = self.splits[fold_index]
         self.train_fold = Subset(self.songfiles_metadata, train_indices)
-        self.val_fold = Subset(self.songfiles_metadata, val_indices)
+        self.valid_fold = Subset(self.songfiles_metadata, val_indices)
 
 
     # def kfold_sampling(self, songfiles_metadata, target_varname, splits=5):
@@ -134,18 +131,24 @@ class BirdieDataModule(LightningDataModule):
     # Handles loading all the training data. If I want to be consistent, will
     # Have to make separate train loaders for each validation split.
     def train_dataloader(self):
-        return AudioDataset(self.train_fold, self.bird_codes, self.epoch_size, self.spectro_window_size)
+        train_dataset = AudioDataset(self.train_fold, self.bird_codes, self.epoch_size, self.spectro_window_size)
+        # The collate_fn seems to be needed due to me returning
+        # a map of data as opposed to a simple array/tensor.
+        return DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x)
+
 
     # Validation data. This can take an array of dataloaders, so for k-folds
     # I think I will try that.
     def val_dataloader(self):
-        return AudioDataset(self.val_fold, self.bird_codes, self.epoch_size, self.spectro_window_size)
-        # return self.valid_dataloaders
+        valid_dataset = AudioDataset(self.valid_fold, self.bird_codes, self.epoch_size, self.spectro_window_size)
+        return DataLoader(valid_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=lambda x: x)
+
 
     # Test data is a set put aside to test the model once it has completed 
     # training, not during training like validation. 
     # Not going to do this right now.
     # def test_dataloader(self):
+
 
     # I will likely just predict on the whole set trained on, 
     # I am just trying to get it working right now

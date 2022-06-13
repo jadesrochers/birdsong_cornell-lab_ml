@@ -172,7 +172,7 @@ class BirdieModel121(LightningModule):
         self.sample_rate = sample_rate
         self.spectro_window_size = spectro_window_size
         self.spectro_step_size = spectro_step_size
-        self.loss_bce = nn.BCELoss(reduction='none')
+        self.loss_bce = nn.BCELoss(reduction='mean')
         self.num_classes = num_classes
 
         ## REASONS to do Transforms/Specto HERE -
@@ -235,7 +235,6 @@ class BirdieModel121(LightningModule):
     # I put the spectrogram generation here to leverage gpu/torchlibrosa
     def on_after_batch_transfer(self, batch_data, batch_idx):
         print('Input data batch size: ', len(batch_data))
-        import pdb; pdb.set_trace()
         spectros = torch.tensor([]).cuda(self.device)
         for input in batch_data:
             # print('Input data series shape: ', input['time_series'].shape)
@@ -268,14 +267,14 @@ class BirdieModel121(LightningModule):
 
         y_hat = self(spectros)
         # Simple method right now is to just use primary labels
-        import pdb; pdb.set_trace()
         loss = self.loss_bce(y_hat['clipwise_output'], primary_labels)
+        # import pdb; pdb.set_trace()
         return loss
 
 
     # just doing a direct copy of the training_step at the moment,
     # need to get this going to see some predictions.
-    def validation_step(self, batch, batch_idx, dataset_idx):
+    def validation_step(self, batch, batch_idx):
         spectros = batch['spectros']
         primary_labels  = batch['primary_labels']
         all_labels = batch['all_labels']
